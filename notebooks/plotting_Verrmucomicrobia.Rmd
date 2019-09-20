@@ -1,0 +1,1418 @@
+---
+title: "MiTag Verrucomicrobia"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+Andi has isolated a new strain of Verrucomicrobia (Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas) with a novel Polysaccharide Utilization Loci (PUL) mechanism. This analyses will added an environmental and phylogenetic angle to his paper. We will look for the Verrucomicrobia Lentimonas strain in MiTAG data extracted from OSD 2014 and TARA's "prokaryotic, surface" samples and map it distribution and proportions in each project respectively. Next, we will take these MITags
+
+Literature:
+
+- https://www.nature.com/articles/ismej20123
+- https://microbiomejournal.biomedcentral.com/articles/10.1186/s40168-018-0521-5
+
+# Set up environment
+
+Create Conda Environment
+```{bash}
+conda create -n verrucomicrobia -f verrucomicrobia.yml
+
+conda create -n taxit -f taxit.yml
+```
+
+Activate Conda Env
+```{bash}
+conda activate verrucomicrobia
+```
+
+Install necessary libraries then load 'em up!
+```{r}
+# Check if basic packages are installed, 
+# if not here then install them
+# credit: https://www.eokodie.com/blog/installing-missing-packages-from-bioconductor-cran-and-github/
+#-----------------------------------
+# List of packages
+packages <- c("tidyverse", "data.table", "parallel", "RSQLite", "rworldmap", "knitr", "ggtree", "viridis", "ggpubr",  "microbiome", "phyloseq", "ggtree", "microbiome")
+
+# Filter for uninstalled packages
+uninstalled.packages <- packages[!(packages %in% installed.packages()[,"Package"])]
+
+# Install them
+# Use bioconductor or standard installation if necessary
+#---------------
+# Install Bioconductor package manager if necessary
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# Install all uninstalled packages
+if (uninstalled.packages %in% BiocManager::available()) {
+  BiocManager::install(pkgs = as.character(uninstalled.packages))
+} else {
+    install.packages(uninstalled.packages)
+  }
+
+# Load libraries
+#---------------
+suppressMessages(lapply(packages, library, character.only = TRUE))
+```
+
+
+# 1. Reclassify the TARA MiTags with the SILVA SSU r132 database
+
+16S rDNA gene fragments were extracted from the TARA Oceans prokaryotic, surface fraction (Sunagawa et al. 2015)  and Ocean Sampling Day 2014 (Kopf et al. 2015) metagenomes by aligning all reads against the SILVA SSU r132 database (Quast et al. 2013).
+
+# 2. Distribution of `Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas` in OSD and TARA
+
+## 1. Import data
+
+```{r}
+# OSD miTAG data
+osd <- data.table::fread(input = "zcat verrucomicroba2/data/raw/osd/osd2014_mitag_tax.tsv.gz",
+                         sep = "\t",
+                         header = TRUE, 
+                         nThread = 30) %>%
+  as_tibble()
+
+# TARA miTAG data from prokaryotic samples (139)
+tara <- data.table::fread(input = "zcat verrucomicroba2/data/raw/tara/tara_mitag_tax.tsv.gz",
+                         sep = "\t",
+                         header = TRUE, 
+                         nThread = 30) %>%
+  as_tibble()
+
+# Projects contextual data database
+db <- RSQLite::dbConnect(drv = SQLite(), dbname = "verrucomicroba2/data/resources/contextual_data.db")
+
+dbListTables(db) # list contents of database
+
+# extract TARA Oceans contextual data from database
+contex <- dbReadTable(db, "contextual_data_all") %>% as_tibble()
+contex_TARA <- dbReadTable(db, "TARA_contex") %>% as_tibble()
+contex_OSD <- dbReadTable(db, "OSD_contex") %>% as_tibble()
+
+dbDisconnect(db) # Disconnect from db
+```
+
+## 2. Clean data
+```{r}
+# Remove rows with "labels" and add column with project name
+osd_mitags <- osd %>% filter(label != "label")%>% mutate(project = "osd")
+tara_mitags <- tara %>% filter(label != "label") %>% mutate(project = "tara")
+
+# combine both OSD and TARA into one dataset
+mitags <- osd_mitags %>% bind_rows(tara_mitags)
+
+# Save for later
+save(osd_mitags, tara_mitags, file = "verrucomicroba2/data/processed/mitags.RData")
+```
+
+Load for later use in needed
+```{r}
+load(file = "data/processed/mitags.RData")
+```
+
+Basic questions
+```{r}
+# How many TARA SRF samples are there? 
+tara_sample_num <- tara_mitags$label %>% unique() %>% length() # 63
+
+# How many OSD samples are there? 
+osd_sample_num <- osd_mitags$label %>% unique() %>% length() # 150
+```
+
+## 3. Calculate the relative abundance of each phylogenetic level per sample
+```{r}
+prep_for_phyloseq <- function(mitags, phylo_lvl){
+  
+  ### Test variables
+#  mitags = osd_mitags
+#  phylo_lvl = "Genus"
+  ###
+  
+  DF <- mitags %>% 
+    group_by_('label', paste(phylo_lvl)) %>%        # group_by phylogenetic level
+    count_(paste(phylo_lvl)) %>%                    
+    ungroup()  %>%
+    mutate(abun = as.numeric(n)) %>%
+    select(-n) %>%
+    rename_(ID = paste(phylo_lvl)) %>%
+    as.data.table %>%
+    dcast.data.table(ID ~ label, 
+                         fun.aggregate = "sum", 
+                         fill = 0,
+                         value.var = "abun")
+  
+  # Prep for phyloseq
+  DF <- as.data.frame(DF)
+  row.names(DF) <- DF$ID # make sample_ID rownames
+  DF$ID <- NULL
+  DF <- as.matrix(DF)
+
+  # Make phyloseq object
+  physeq <- phyloseq(otu_table(DF, taxa_are_rows = TRUE)
+                   #, sample_data(contex)                  # Add in contextual data here to phyloseq object
+                   )
+  
+  # Transform data
+#  physeq_clr <- microbiome::transform(physeq, 'clr')                  # CLR
+  physeq_clr_relabun <- microbiome::transform(physeq, 'compositional') # Compositional
+}
+
+# list of phylogenetic levels
+lvls <- c("Genus", "Family", "Order", "Class", "Phylum", "Kingdom")
+
+# Iterate over phylogenetic levels and calculate relative proportions
+OSD_mitags_rel_abun <- sapply(lvls[1:4], prep_for_phyloseq, mitags = osd_mitags, USE.NAMES = TRUE)
+TARA_mitags_rel_abun <- sapply(lvls[1:4], prep_for_phyloseq, mitags = tara_mitags, USE.NAMES = TRUE)
+
+# Unit test: Do the number of samples match long form and matrix form?
+(OSD_mitags_rel_abun$Genus %>% dim() %>% as_vector())[2] == osd_sample_num 
+(TARA_mitags_rel_abun$Genus %>% dim() %>% as_vector())[2] == tara_sample_num
+```
+
+Save/load data
+Save
+```{r}
+# save
+save(OSD_mitags_rel_abun, TARA_mitags_rel_abun, contex, contex_TARA, contex_OSD, file = "data/interim/mitag_rel_abun.RData")
+```
+
+Load
+```{r}
+load("data/interim/mitag_rel_abun.RData")
+```
+
+Prep for plotting on map by join relative abundance data with coordinates
+```{r}
+prep_map <- function(rel_abun, phylo_lvl_name){
+  
+  
+  ### Test Variables
+#  rel_abun = OSD_mitags_rel_abun$Genus
+#  phylo_lvl_name = "Lentimonas"
+  ###
+  
+  # Convert back to long form for ggplot
+  rnames <- rel_abun %>% row.names() # get row names
+
+  rel_abun.df <- rel_abun %>% as.data.frame() # convert to dataframe
+
+  rownames(rel_abun.df) <- rnames # add in row names (taxa) to dataframe
+
+  rel_abun.df %>% 
+    as_tibble() %>%
+    rownames_to_column(var = "ID") %>% 
+    gather(key = "sample_ID", value = "rel_abun", -ID) %>% 
+    filter(ID == paste(phylo_lvl_name)) %>%
+    left_join(contex %>% select(sample_ID, latitude, longitude, ecoregion)) # Join with metadata
+}
+
+Lentimonas_rel_abun_OSD <- prep_map(rel_abun = OSD_mitags_rel_abun$Genus, phylo_lvl_name = "Lentimonas")
+Puniceicoccaceae_rel_abun_OSD <- prep_map(rel_abun = OSD_mitags_rel_abun$Family, phylo_lvl_name = "Puniceicoccaceae")
+Opitutales_rel_abun_OSD <- prep_map(rel_abun = OSD_mitags_rel_abun$Order, phylo_lvl_name = "Opitutales")
+Verrucomicrobiae_rel_abun_OSD <- prep_map(rel_abun = OSD_mitags_rel_abun$Class, phylo_lvl_name = "Verrucomicrobiae")
+
+Lentimonas_rel_abun_TARA <- prep_map(rel_abun = TARA_mitags_rel_abun$Genus, phylo_lvl_name = "Lentimonas")
+Puniceicoccaceae_rel_abun_TARA <- prep_map(rel_abun = TARA_mitags_rel_abun$Family, phylo_lvl_name = "Puniceicoccaceae")
+Opitutales_rel_abun_TARA <- prep_map(rel_abun = TARA_mitags_rel_abun$Order, phylo_lvl_name = "Opitutales")
+Verrucomicrobiae_rel_abun_TARA <- prep_map(rel_abun = TARA_mitags_rel_abun$Class, phylo_lvl_name = "Verrucomicrobiae")
+```
+
+Save
+```{r}
+save(Lentimonas_rel_abun_OSD, Puniceicoccaceae_rel_abun_OSD, Opitutales_rel_abun_OSD, Verrucomicrobiae_rel_abun_OSD, OSD_contex, OSD_file = "verrucomicroba2/data/processed/OSD.RData")
+
+save(Lentimonas_rel_abun_TARA, Puniceicoccaceae_rel_abun_TARA, Opitutales_rel_abun_TARA, Verrucomicrobiae_rel_abun_TARA, TARA_contex, file = "verrucomicroba2/data/processed/TARA.RData")
+```
+
+## 4. Visualize relative proportions of `Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas` at different phylogenetic levels on the world map
+
+### Load data from here to start!
+```{r}
+load(file = "data/processed/OSD.RData")
+load(file = "data/processed/TARA.RData")
+```
+
+### Plot all samples
+
+Map plotting functions
+```{r}
+# Map theme aesthetics
+theme_map <- function(...) {
+  theme_minimal() +
+    theme(
+      #text = element_text(family = "Ubuntu Regular", color = "#22211d"),
+      axis.line = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      # panel.grid.minor = element_line(color = "#ebebe5", size = 0.2),
+      panel.grid.major = element_line(color = "#ebebe5", size = 0.2),
+      panel.grid.minor = element_blank(),
+      plot.background = element_rect(fill = "#f5f5f2", color = NA),
+      panel.background = element_rect(fill = "#f5f5f2", color = NA),
+      legend.background = element_rect(fill = "#f5f5f2", color = NA),
+      panel.border = element_blank(),
+      ...
+    )
+}
+
+plot_on_world <- function(df, title){
+  
+  #df = Lentimonas_rel_abun
+  #title = "Relative abundance of Verrucomicrobia Lentimonas in TARA Oceans and OSD"
+  # Plot
+  map.world <- map_data(map="world")
+  
+  p <- ggplot() +
+    geom_map(data=map.world, map=map.world, aes(map_id=region, x=long, y=lat)) +
+    geom_point(data = df, 
+               shape =21,
+               size = 2.2, 
+               alpha = 0.7,
+               color = "black",
+               aes(x=longitude, y=latitude, fill = rel_abun)) +
+    scale_fill_gradient2(low = "#40e0d0", mid = "#ff8c00", high="#ff0080", 
+                         #low = "#fcb045", mid = "#fd1d1d", high="#833ab4",
+                         trans = "sqrt", 
+                         midpoint=1.8,
+                         name = "Proportion (%)") +
+    ggtitle(paste(title)) +
+    xlab("") +
+    ylab("") +
+    coord_equal(xlim = c(-160, 170)) +
+    theme_map(legend.position = "top",
+              legend.key.height = unit(0.2, "cm"))
+  
+  return(p)
+}
+
+plot_on_world1 <- function(df, title) {
+  
+  #df = Lentimonas_rel_abun
+  #title = "Relative abundance of Verrucomicrobia Lentimonas in TARA Oceans and OSD"
+  # Plot
+  map.world <- map_data(map="world")
+  
+  p <- ggplot() +
+    geom_map(data=map.world, map=map.world, aes(map_id=region, x=long, y=lat)) +
+    geom_point(data = df, 
+               shape =21,
+               size = 2.2, 
+               alpha = 0.7,
+               color = "black",
+               aes(x=longitude, y=latitude, fill = rel_abun)) +
+    scale_fill_gradient2(low = "#40e0d0", mid = "#ff8c00", high="#ff0080",
+                         #low = "blue", high = "red",
+                         trans = "sqrt", 
+                         midpoint=1,
+                         name = "Proportion (%)") +
+    ggtitle(paste(title)) +
+    xlab("") +
+    ylab("") +
+    coord_equal(xlim = c(-160, 170)) +
+    theme_map(legend.position = "top",
+              legend.key.height = unit(0.2, "cm"))
+  
+  return(p)
+}
+
+plot_on_world2 <- function(df, title){
+  
+  #Test variables 
+#  df = Lentimonas_rel_abun_OSD
+#  title = "Relative abundance of Verrucomicrobia Lentimonas in TARA Oceans and OSD"
+  ###
+  
+  # Plot
+  map.world <- map_data(map="world")
+  
+  p <- ggplot() +
+    geom_map(data=map.world, map=map.world, aes(map_id=region, x=long, y=lat)) +
+    geom_point(data = df, 
+               shape =21,
+               size = 4, 
+               alpha = 0.7,
+               color = "black",
+               aes(x=longitude, y=latitude, fill = "#40e0d0")) +
+    geom_text(label=df$ecoregion, nudge_x = 0.25, nudge_y = 0.25, check_overlap = T) +
+    ggtitle(paste(title)) +
+    xlab("") +
+    ylab("") +
+    coord_equal(xlim = c(-160, 170)) +
+    theme_map(legend.position = "",
+              legend.key.height = unit(0.2, "cm"))
+  
+  return(p)
+}
+
+plot_on_world2_zoom <- function(df, title){
+  
+  #Test variables 
+#  df = Lentimonas_rel_abun_OSD
+#  title = "Relative abundance of Verrucomicrobia Lentimonas in TARA Oceans and OSD"
+  ###
+  
+  # Plot
+  map.world <- map_data(map="world")
+  
+  # scaling map
+  # Credit: https://github.com/merenlab/world-map-r
+  MIN_POINT_SIZE <- 0.2
+  MAX_POINT_SIZE <- 15
+
+  MARGIN_MIN_LAT <- -5
+  MARGIN_MAX_LAT <- 5
+  MARGIN_MIN_LON <- -5
+  MARGIN_MAX_LON <- 5
+  
+  
+  min_lat <- min(df$latitude) + MARGIN_MIN_LAT
+  max_lat <- max(df$latitude) + MARGIN_MAX_LAT
+  min_lon <- min(df$longitude) + MARGIN_MIN_LON
+  max_lon <- max(df$longitude) + MARGIN_MAX_LON
+  
+  # Plot
+  p <- ggplot() +
+    geom_map(data=map.world, map=map.world, aes(map_id=region, x=long, y=lat)) +
+    coord_cartesian(xlim = c(min_lon, max_lon),
+                  ylim = c(min_lat, max_lat)) +
+    geom_point(data = df, 
+               shape =21,
+               size = 4, 
+               alpha = 0.7,
+               color = "black",
+               aes(x=longitude, y=latitude, fill = "#40e0d0")) +
+    geom_text(label=df$ecoregion, nudge_x = 0.25, nudge_y = 0.25, check_overlap = T) +
+    ggtitle(paste(title)) +
+    xlab("") +
+    ylab("") +
+    theme_map(legend.position = "",
+              legend.key.height = unit(0.2, "cm"))
+  
+  return(p)
+}
+
+# OSD EU
+#--------
+plot_on_world_eu <- function(df, title){
+  
+  #df = Lentimonas_rel_abun
+  #title = "Relative abundance of Verrucomicrobia Lentimonas in TARA Oceans and OSD"
+  # Plot
+  map.world <- map_data(map="world")
+  
+  min_lat <- 33.6667
+  max_lat <- 60
+  min_lon <- -14.4367
+  max_lon <-  32.93667
+  
+  p <- ggplot() +
+    geom_map(data=map.world, map=map.world, aes(map_id=region, x=long, y=lat)) +
+    geom_point(data = df, 
+               shape =21,
+               size = 2.2, 
+               alpha = 0.7,
+               color = "black",
+               aes(x=longitude, y=latitude, fill = rel_abun)) +
+    scale_fill_gradient2(low = "#40e0d0", mid = "#ff8c00", high="#ff0080", 
+                         #low = "#fcb045", mid = "#fd1d1d", high="#833ab4",
+                         trans = "sqrt", 
+                         midpoint=1.8,
+                         name = "Proportion (%)") +
+    ggtitle(paste(title)) +
+    xlab("") +
+    ylab("") +
+    #coord_equal(xlim = c(-30, 40), ylim = c(-33.6667,56.47157)) +
+    coord_cartesian(xlim = c(min_lon, max_lon), ylim = c(min_lat, max_lat)) +
+    theme_map(legend.position = "top",
+              legend.key.height = unit(0.2, "cm"))
+  
+  return(p)
+}
+```
+
+### Final plots for manuscript:
+```{r}
+# TARA all
+#---------
+# Number of Samples
+num_samples <- Lentimonas_rel_abun_TARA %>% 
+  mutate(rel_abun = (rel_abun) * 100) %>%
+  filter(rel_abun > 0) %>% .$sample_ID %>% length()
+# Plot title
+plot_title <- paste("Verrucomicrobia Lentimonas relative proportions (x > 0%) in TARA metagenomes (n = ", num_samples, ")")
+p_Lentimonas_TARA <- Lentimonas_rel_abun_TARA %>% 
+  mutate(rel_abun = (rel_abun) * 100) %>% 
+  filter(rel_abun > 0) %>% 
+  plot_on_world1(title = "")
+
+# OSD all
+#---------
+# Number of Samples
+num_samples <- Lentimonas_rel_abun_OSD %>% 
+  mutate(rel_abun = (rel_abun) * 100) %>%
+  filter(rel_abun > 0) %>% .$sample_ID %>% length()
+
+# Plot title
+plot_title <- paste("Verrucomicrobia Lentimonas relative proportions (x > 0%) in OSD metagenomes (n = ", num_samples, ")")
+p_Lentimonas_OSD <- Lentimonas_rel_abun_OSD %>% 
+  mutate(rel_abun = (rel_abun) * 100) %>%
+  filter(rel_abun > 0) %>%
+  plot_on_world(title = "")
+
+# OSD EU
+#-------
+# Number of Samples
+num_samples <- Lentimonas_rel_abun_OSD %>% mutate(rel_abun = (rel_abun) * 100) %>% filter(rel_abun > 0) %>% .$sample_ID %>% length()
+plot_title <- paste("Verrucomicrobia Lentimonas relative proportions in (x > 0%) in European OSD metagenomes \n(n =", num_samples, ")")
+osd_eu <- Lentimonas_rel_abun_OSD %>% 
+  ungroup() %>% 
+  arrange(desc(rel_abun)) %>% 
+  mutate(rel_abun = (rel_abun) * 100) %>%
+  filter(rel_abun > 0) %>%
+  plot_on_world_eu(title = plot_title)
+```
+
+
+### Heat map of various Genus of Lentimonas in samples
+
+In samples with high proportions of Puniceicoccaceae what are the dominant Genus, Lentimonas? 
+
+Load data
+```{r}
+load(file = "data/processed/mitags.RData")
+load(file = "data/processed/OSD.RData")
+load(file = "data/processed/TARA.RData")
+```
+
+
+```{r}
+# Sample with top 10 most Lentimonas
+OSD_samples_lentimonas_10 <- Lentimonas_rel_abun_OSD %>% 
+  ungroup() %>% 
+  arrange(desc(rel_abun)) %>% 
+  slice(1:10) %>%
+  .$sample_ID
+
+OSD_samples_Verrucomicrobiae_10 <- Verrucomicrobiae_rel_abun_OSD %>% 
+  ungroup() %>% 
+  arrange(desc(rel_abun)) %>% 
+  slice(1:10) %>%
+  .$sample_ID
+
+TARA_samples_lentimonas_10 <- Lentimonas_rel_abun_TARA %>% 
+  ungroup() %>% 
+  arrange(desc(rel_abun)) %>% 
+  slice(1:10) %>%
+  .$sample_ID
+
+# Heat map plotting function
+plot_miTAG_heatmap <- function(samples, mitags, list_col, title){
+  
+  #Test variables
+  ###
+#   samples = OSD_samples_Verrucomicrobiae_10
+#   mitags = osd_mitags
+  ###
+  
+  # ggplot stuff
+  base_breaks <- function(n = 10){
+    function(x) {
+      axisTicks(log10(range(x, na.rm = TRUE)), log = TRUE, n = n)
+    }
+  }
+  
+  
+  textcol <- "black"
+  
+mitags %>% 
+    filter(Family == "Puniceicoccaceae") %>% # Filter for Puniceicoccaceae Family
+    filter(label %in% samples) %>% # filter for top 10 samples
+    group_by(label, Genus) %>%      
+    add_count() %>% # count occurences of Genus
+    ungroup() %>% 
+    group_by(label) %>%  
+    select(label, Genus, n) %>%
+    unique() %>% 
+    spread(key = Genus, value = n) %>% 
+    replace_na(list_col) %>% 
+    gather(key = Genus, value = n, na.rm = FALSE, -label) %>% 
+    unique() %>%
+    group_by(label) %>%  
+    mutate("miTAG_count_per_sample" = sum(n))  %>% # Count total amount of Puniceicoccaceae Family
+    mutate(Proportion_per = (n/miTAG_count_per_sample)*100) %>% # relative proportion of each Puniceicoccaceae Genus
+  mutate(Proportion = n/miTAG_count_per_sample) %>% # relative proportion of each Puniceicoccaceae Genus
+  ungroup() %>%
+    
+  # Plot
+    ggplot(aes(y=label,x=Genus, fill = Proportion_per)) +
+    #redrawing tiles to remove cross lines from legend
+    geom_tile(colour="black",size=0.25, show.legend = TRUE)+
+    #remove axis labels, add title
+    labs(x="",y="",title="")+
+    #remove extra space
+    scale_y_discrete(expand=c(0,0))+
+    #custom breaks on x-axis
+    scale_x_discrete(expand=c(0,0))+
+    #custom colours for cut levels and na values
+    viridis::scale_fill_viridis(option = "D", trans = scales::log_trans(), breaks = base_breaks(), labels = prettyNum) +
+    #equal aspect ratio x and y axis
+    coord_fixed() +
+    #set base size for all font elements
+    theme_grey(base_size=10) +
+    # Squeeze
+    coord_fixed() +
+  #labs(fill = "Proportion of \nPuniceicoccaceae Genus (%)") +
+  labs(fill = paste(title)) +
+    #theme options
+    theme(
+      #legend.position = "bottom",
+      #axis.text.x = element_text(angle = 90, hjust = 1),
+      #remove legend title
+      #legend.title=element_blank(),
+      #remove legend margin
+      legend.spacing = grid::unit(0,"cm"),
+      #change legend text properties
+      legend.text=element_text(colour=textcol,size=7,face="bold"),
+      #change legend key height
+      legend.key.height=grid::unit(0.8, "cm"),
+      #set a slim legend
+      legend.key.width=grid::unit(0.8, "cm"),
+      #set x axis text size and colour
+      axis.text.x=element_text(hjust = 1, vjust = 0.5, colour=textcol, angle = 90, size = 10),
+      axis.ticks.y = element_blank(),
+      axis.ticks.x = element_blank(),
+      #set y axis text colour and adjust vertical justification
+      axis.text.y=element_text(vjust = 0.2, colour=textcol, size = 10),
+      #change axis ticks thickness
+      axis.ticks=element_line(size=0.4),
+      #change title font, size, colour and justification
+      plot.title=element_blank(),
+      #remove plot background
+      plot.background=element_blank(),
+      #remove plot border
+      panel.border=element_blank(),
+      # Empty cells are black
+      panel.background = element_rect(fill = 'black')
+      # # golden ratio portrait
+      # aspect.ratio = (1 + sqrt(5))/ 2) # https://tinyurl.com/yxkat9uf
+    )
+}
+
+# Plot
+
+# TARA
+#------
+list_col <- list(Coraliomargarita = 0, 
+                 Lentimonas = 0, 
+                 MB11C04_marine_group = 0, 
+                 Pelagicoccus = 0, `NA` = 0, 
+                 Lentimonas = 0, 
+                 Cerasicoccus = 0, 
+                 "Verruc-01" = 0, 
+                 Puniceicoccus = 0)
+
+p_tara_heat <- plot_miTAG_heatmap(TARA_samples_lentimonas_10, tara_mitags, list_col, title = "Proportion of Puniceicoccaceae Genus (%)")
+
+
+# OSD
+#----
+
+# OSD lentimonas
+list_col <- list(Coraliomargarita = 0, Lentimonas = 0, MB11C04_marine_group = 0, Pelagicoccus = 0, `NA` = 0)
+p_osd_heat <- plot_miTAG_heatmap(OSD_samples_lentimonas_10, osd_mitags, list_col, title = "Proportion of Puniceicoccaceae Genus (%)")
+
+# Annotate and Save
+#-------------------
+# TARA
+caption_p_tara_heat <- "Top 10 sample with highest proportion of Lentimonas mitags from TARA Ocean prokaryotic, surface samples. Each tile \nrepresents the proportion of Puniceicoccaceae Genus mitags found in each sample."
+p_tara_heat <- p_tara_heat %>%
+annotate_figure(bottom = text_grob(caption_p_tara_heat, size = 10),
+                #fig.lab = "Figure 6", 
+                #fig.lab.face = "bold"
+                )
+
+# OSD
+caption_p_osd_heat <- "Top 10 sample with highest proportion of Lentimonas mitags from OSD 2014, surface samples. Each tile \nrepresents the proportion of Puniceicoccaceae Genus mitags found in each sample."
+p_osd_heat <- p_osd_heat %>% 
+annotate_figure(bottom = text_grob(caption_p_osd_heat,size = 10),
+                #fig.lab = "", 
+                #fig.lab.face = "bold"
+  )
+
+ggsave(filename = "reports/figures/p_osd_heat.pdf", plot = p_osd_heat)
+ggsave(filename = "reports/figures/p_tara_heat.pdf", plot = p_tara_heat)
+``` 
+
+In the top 10 Puniceicoccaceae samples, which samples have the most Lentimonas Genus
+```{r}
+top_10 <- function(samples, mitags){
+  mitags %>% 
+  filter(Family == "Puniceicoccaceae") %>% # Filter for Puniceicoccaceae Family
+  filter(label %in% samples) %>% # filter for top 10 samples
+  group_by(label, Genus) %>%      
+  add_count() %>% # count occurences of Genus
+  ungroup() %>% 
+  group_by(label) %>%  
+  select(label, Genus, n) %>%
+  unique() %>%
+  mutate("miTAG_count_per_sample" = sum(n)) %>% # Count total amount of Puniceicoccaceae Family
+  mutate(rel_abun = n/miTAG_count_per_sample) %>% # relative proportion of each Puniceicoccaceae Genus
+  filter(rel_abun == max(rel_abun)) %>% # get top proportion
+  arrange(desc(rel_abun))
+}
+
+top_10(TARA_samples_lentimonas_10, tara_mitags)
+top_10(OSD_samples_lentimonas_10, osd_mitags)
+```
+Lenitmonas is the most represented Genus of the Puniceicoccaceae Family in OSD113 
+
+# 3. Map reads from most abundant samples to genome
+
+## Download raw reads
+
+Make list 
+```{r}
+contex_TARA %>% filter(sample_ID %in% tara_10) %>% select(ena_run)
+```
+
+Get FTP links from ENA and make `verrucomicroba2/data/raw/osd/ftp.txt`
+
+Download reads
+```{bash}
+#cp /bioinf/projects/osd/main/2014/06/pre-processing/shotgun/quality-trimming/lgc/Sample_OSD113/fastq \
+#data/external
+
+# OSD
+for FTP in `cat verrucomicroba2/data/raw/osd/ftp.txt`;
+do
+  wget "${FTP}"
+done
+
+# TARA 
+```
+
+## Trim adapters
+```{bash}
+mkdir -p verrucomicroba2/data/processed/00adapterclipping
+
+LOCATION=verrucomicroba2/data/raw/osd
+LOCATION2=verrucomicroba2/data/resources
+LOCATION3=verrucomicroba2/data/processed/00adapterclipping
+
+for file in `ls "${LOCATION}"/*R1.qc.fastq.gz`; 
+do 
+    fname=$(basename "${file}")
+    bbduk.sh -Xmx1g in1="${file}" \
+                    in2="${file/R1/R2}" \
+                    out1="${LOCATION3}"/"${fname/R1.qc.fastq.gz/R1.ac.fastq.gz}" \
+                    out2="${LOCATION3}"/"${fname/R1.qc.fastq.gz/R2.ac.fastq.gz}" \
+                    ref="${LOCATION2}"/adapters.fa tbo tpe k=23 mink=11 hdist=1 ktrim=r
+done
+```
+
+## Merge reads
+
+```{bash}
+mkdir -p  verrucomicroba2/data/processed/01fastq_merged
+
+LOCATION=verrucomicroba2/data/processed/00adapterclipping
+LOCATION1=verrucomicroba2/data/processed/01fastq_merged
+
+for file in `ls "${LOCATION}"/*R1.ac.fastq`; do
+  fname=$(basename "${file}")
+  vsearch --threads 2 --fastq_maxmergelen 291 --fastq_minovlen 125 --fastq_mergepairs "${file}" --reverse "${file/R1/R2}" --fastq_ascii 33 --fastqout "${LOCATION1}"/"${fname/R1.ac.fastq/merged.ac.fastq}" --fastq_allowmergestagger
+done
+```
+
+## Quality trim merged reads
+```{bash}
+mkdir -p  verrucomicroba2/data/processed/02fastq_qual_trim/
+mkdir -p  verrucomicroba2/data/processed/02fastq_qual_trim/merged/
+
+LOCATION=verrucomicroba2/data/processed/01fastq_merged
+LOCATION1=verrucomicroba2/data/processed/merged/02fastq_qual_trim
+
+for file in `ls "${LOCATION}"/*merged.ac.fastq`; do
+     fname=$(basename "${file}")
+     bbduk.sh in="${file}" out="${LOCATION1}"/"${fname/ac/qc}.gz" \
+     trimq=20 qtrim=rl minlen=100 maxns=0
+done
+```
+
+## Quality trim paired reads
+```{bash}
+LOCATION=verrucomicroba2/data/processed/00adapterclipping
+LOCATION1=verrucomicroba2/data/processed/02fastq_qual_trim/paired
+
+for file in `ls "${LOCATION}"/*R1.ac.fastq`; do
+     fname=$(basename "${file}")
+     bbduk.sh in="${file}" \
+              in2="${file/R1/R2}" \
+              outs="${LOCATION1}"/"${fname/ac/SR}.gz" \
+              out="${LOCATION1}"/"${fname/ac/qc}.gz"\
+              out2="${LOCATION1}"/"${fname/R1.ac/R2.qc}.gz"\
+     trimq=20 qtrim=rl minlen=100 maxns=0
+done
+```
+
+## Map Reads
+
+Index genome
+```{bash}
+mkdir -p verrucomicroba2/data/processed/03mapping
+
+bowtie2-build verrucomicroba2/data/external/CC151_full.fasta verrucomicroba2/data/processed/03mapping/CC151_full
+```
+
+Inspect the index I just built
+```{bash}
+bowtie2-inspect verrucomicroba2/data/processed/03mapping/CC151_full -s
+```
+Looks good! Has both the genome and plasmid read :)
+
+Map reads, Convert sam to bam, sort the bam file, and index
+```{bash}
+# Make list of samples
+LOCATION=verrucomicroba2/data/raw/osd
+
+ls "${LOCATION}" | sed 's|_|\t|' | cut -f1 | uniq > "${LOCATION}"/sample_list.txt
+
+# Test
+bowtie2 -x verrucomicroba2/data/processed/03mapping/CC151_full \
+        -1 verrucomicroba2/data/raw/osd/OSD113_R1.qc.fastq.gz \
+        -2 verrucomicroba2/data/raw/osd/OSD113_R2.qc.fastq.gz \
+        -S verrucomicroba2/data/processed/03mapping/CC151_full.sam \
+        --threads 20
+
+# Run
+./verrucomicroba2/src/data/mapping.sh
+```
+
+## Visualize metagenome read mapping reference genome with Anvio
+
+Let's visualize all the read mapping in Anvio!
+
+For sanity... separate Andi's genomes into two fasta (genome, plasmid
+)
+```{bash}
+# gene calls
+#cat <(head -n 1 verrucomicroba2/data/external/CC151_GFF3_matt.csv) <(cat verrucomicroba2/data/external/CC151_GFF3_matt.csv | grep "CC151_genome_" | sed 's|CC151_genome_||')  > verrucomicroba2/data/external/CC151_GFF3_matt_genome.csv
+#cat <(head -n 1 verrucomicroba2/data/external/CC151_GFF3_matt.csv) <(cat  verrucomicroba2/data/external/CC151_GFF3_matt.csv | grep "CC151_plasmid_" | sed 's|CC151_plasmid_||')  > verrucomicroba2/data/external/CC151_GFF3_matt_plasmid.csv
+
+# fasta
+#grep -n '>' verrucomicroba2/data/external/CC151_full.fasta
+#1:>CC151_genome
+#79740:>CC151_plasmid
+
+#wc -l verrucomicroba2/data/external/CC151_full.fasta
+# 97434
+
+#> 97434 - 79740 
+#[1] 17694
+
+#head -n 79739 verrucomicroba2/data/external/CC151_full.fasta > verrucomicroba2/data/external/CC151_genome.fasta
+
+#tail -n 17695 verrucomicroba2/data/external/CC151_full.fasta > verrucomicroba2/data/external/CC151_plasmid.fasta
+```
+
+### Generate Anvio contigs database
+
+Try with Andi's external gene calls
+```{bash}
+FULL=verrucomicroba2/data/external/CC151_full.fasta
+GENOME=verrucomicroba2/data/external/CC151_genome.fasta
+PLASMID=verrucomicroba2/data/external/CC151_plasmid.fasta
+OUTPUT=verrucomicroba2/data/processed/anvio
+GENES1=verrucomicroba2/data/external/CC151_GFF3_matt_genome.csv
+GENES2=verrucomicroba2/data/external/CC151_GFF3_matt_plasmid.csv
+
+# External gene calls 
+anvi-gen-contigs-database -f "${GENOME}" \
+                          -o "${OUTPUT}"/CONTIGS_genome.db \
+                          --external-gene-calls "${GENES1}"
+
+#Config Error: The sequence corresponds to the gene callers id '1' does not seem to have proper
+#              number of nucleotides to be translated :/ Here it is: ATGGCTACATGCTACCAGAAAATGTC
+#              AAAGGATAGTATTACACCACCTGAAGCACGTAGCATGACTCTAGTGGATGCTGGTTCAATGGTAAGCAATAGCGCCTATT
+#              CCTGCAATCTGAAGGTGCTCACTCCGTATTTCTA
+
+anvi-export-gene-calls -c "${OUTPUT}"/CONTIGS_genome.db \
+                       -o "${OUTPUT}"/gene_calls_summary_genome.txt
+# NOT working...
+
+anvi-gen-contigs-database -f "${PLASMID}" \
+                          -o "${OUTPUT}"/CONTIGS_plasmid.db \
+                          --external-gene-calls "${GENES2}
+```
+Didn't work
+
+Have Anvio make the gene calls
+```{bash}
+FULL=verrucomicroba2/data/external/CC151_full.fasta
+OUTPUT=verrucomicroba2/data/processed/03mapping/anvio
+
+mkdir -p "${OUTPUT}"
+
+# Generate the CONTIGS.db                         
+anvi-gen-contigs-database -f "${FULL}" \
+                          -o "${OUTPUT}"/CONTIGS.db
+
+# Get gene calls                          
+anvi-export-gene-calls -c "${OUTPUT}"/CONTIGS.db \
+                       -o "${OUTPUT}"/gene_calls_summary.txt
+
+# Get proteins
+anvi-get-sequences-for-gene-calls -c "${OUTPUT}"/CONTIGS.db \
+                                  -o "${OUTPUT}"/CC151_full.faa \
+                                  --get-aa-sequences \
+                                  --gene-caller-ids "${OUTPUT}"/gene_calls_summary.txt 
+
+```
+`--get-aa-sequences` not working!!!!!
+
+### Find single-copy-genes
+```{bash}
+anvi-run-hmms -c verrucomicroba2/data/processed/03mapping/anvio/CONTIGS.db \
+              --num-threads 50
+```
+
+### Generate Anvio profile
+```{bash}
+# Sort first the anvio way
+anvi-init-bam -o verrucomicroba2/data/processed/03mapping/anvio/CC151_full.anvio.bam \
+                 verrucomicroba2/data/processed/mapping/CC151_full.bam
+                
+# Loop
+LOCATION=verrucomicroba2/data/raw/osd
+ANVIO=verrucomicroba2/data/processed/03mapping/anvio
+MAPPING=verrucomicroba2/data/processed/03mapping
+
+for GENOME in `cat "${LOCATION}"/sample_list.txt`
+do
+anvi-profile -c "${ANVIO}"/CONTIGS.db \
+             -i "${MAPPING}"/CC151_full_"${GENOME}".bam \
+             -o "${ANVIO}"/"${GENOME}" \
+             --cluster-contigs \
+             --num-threads 50 
+             
+done
+```
+
+### Merge all of the profiles
+```{bash}
+ANVIO=verrucomicroba2/data/processed/03mapping/anvio
+
+anvi-merge    "${ANVIO}"/OSD*/PROFILE.db \
+           -o "${ANVIO}"/MERGED-OSD \
+           -c "${ANVIO}"/CONTIGS.db
+```
+
+### Get average coverage per gene
+```{bash}
+ANVIO=verrucomicroba2/data/processed/03mapping/anvio
+
+anvi-export-gene-coverage-and-detection -p "${ANVIO}"/OSD113/PROFILE.db \
+                                        -c "${ANVIO}"/CONTIGS.db \
+                                        -O "${ANVIO}"/OSD113/OSD113_cov_per_gene
+        
+```
+
+
+### Check out results via ssh tunnel
+Tutorial [HERE](http://merenlab.org/2015/11/28/visualizing-from-a-server/)
+```{bash}
+LOCATION=verrucomicroba2/data/processed/03mapping/anvio
+anvi-interactive -p "${LOCATION}"/MERGED-OSD/PROFILE.db \
+                 -c "${LOCATION}"/CONTIGS.db \
+                 --server-only \
+                 -P 8888
+```
+
+
+## Coverage per contig and gene
+
+Contig coverage
+
+[Metassemble script](https://github.com/inodb/metassemble/blob/master/scripts/validate/map/gen_contig_cov_per_bam_table.py)
+```{bash}
+MAP=verrucomicroba2/data/processed/03mapping
+GENOME=verrucomicroba2/data/external/CC151_full.fasta
+BIN=verrucomicroba2/src/tools/gen_contig_cov_per_bam_table.py
+OUTPUT=verrucomicroba2/data/processed/03mapping/cov-per-contig
+
+mkdir -p "${OUTPUT}"
+
+genomeCoverageBed -ibam "${MAP}"/CC151_full_OSD113.bam > "${OUTPUT}"/CC151_full_OSD113.bam.coverage
+
+python "${BIN}" --isbedfiles "${GENOME}" "${OUTPUT}"/CC151_full_OSD113.bam.coverage > "${OUTPUT}"/CC151_full_OSD113.bam.coverage.percontig
+```
+
+Gene Coverage
+```{bash}
+GENOME=verrucomicroba2/data/external/CC151_full.fasta
+NAME=$(basename "${GENOME}" .fasta)
+OUTPUT=verrucomicroba2/data/processed/03mapping/cov-per-gene
+MAP=verrucomicroba2/data/processed/03mapping
+
+mkdir -p "${OUTPUT}"
+
+# Predict genes
+~/opt/Prodigal/prodigal -i "${GENOME}" \
+                        -f gff \
+                        -o "${OUTPUT}"/"${NAME}".gff \
+                        -a "${OUTPUT}"/"${NAME}".faa \
+                        -d "${OUTPUT}"/"${NAME}".nt.fasta 
+
+# Prodigal results: close ends, 
+
+# Convert gff output from Prodigal to bed format with Bedops
+gff2bed < "${OUTPUT}"/"${NAME}".gff | sort --parallel=8 -k1,1 -k2,2n > "${OUTPUT}"/"${NAME}".bed
+
+# Convert BAM file to bed format with Bedtools
+bamToBed -i "${MAP}"/CC151_full_OSD113.bam | sort --parallel=8 -k1,1 -k2,2n > "${MAP}"/CC151_full_OSD113.bam.bed
+
+# Coverage per gene
+bedtools coverage -hist -sorted  -a "${OUTPUT}"/"${NAME}".bed -b "${MAP}"/CC151_full_OSD113.bam.bed > "${OUTPUT}"/CC151_full_OSD113.coverage.hist
+```
+
+Calculate the mean coverage of each ORF with the following awk [script](https://gist.github.com/genomewalker/089690cc59795ae73125#file-get_orf_coverage_from_bam-coassembly-awk)
+```{bash}
+OUTPUT=verrucomicroba2/data/processed/03mapping/cov-per-gene
+BIN=verrucomicroba2/src/tools/get_orf_coverage_from_bam-coAssembly.awk
+
+mawk -f "${BIN}" "${OUTPUT}"/CC151_full_OSD113.coverage.hist > "${OUTPUT}"/CC151_full_OSD113.orf-coverage.txt
+```
+
+Ok now lets see if any of Andi's PUL genes have coverage on OSD113
+Check out results
+```{r}
+# Import gene coverage
+cov_per_gene <- data.table::fread(input = "verrucomicroba2/data/processed/03mapping/cov-per-gene/CC151_full_OSD113.orf-coverage.txt", 
+                                      sep = "\t", 
+                                      header = FALSE) %>%
+  as_tibble() %>% 
+  rename(Protein_ID = V1, length = V2, mean_coverage_per_gene = V3) %>% 
+  separate(Protein_ID, into = c("Protein_ID", "b"), sep = "orf-") %>% 
+  mutate(category = case_when(grepl("genome", Protein_ID)    ~ "genome",
+                              grepl("plasmid", Protein_ID)   ~ "plasmid")) %>%
+  unite(test, category, b, sep = "_") %>%
+  mutate(Protein_ID = "CC151") %>%
+  unite(col = Protein_ID, Protein_ID, test)
+
+# Import annotation
+annotations <- read_csv("verrucomicroba2/data/external/PULS.csv", col_names = TRUE)
+
+# Join annotations with gene cov results
+PUL_coverage <- annotations %>% left_join(cov_per_gene) 
+```
+
+Explore data
+```{r}
+# How many pulls have coverage?
+PUL_coverage %>% filter(mean_coverage_per_gene > 0) %>% .$Protein_ID %>% length()
+# 11
+
+# Average coverage?
+PUL_coverage %>% filter(mean_coverage_per_gene > 0)  %>% summarise(avg_coverage = mean(mean_coverage_per_gene))
+# 0.734
+
+PULs_with_coverage <- PUL_coverage %>% filter(mean_coverage_per_gene > 0) %>% .$Protein_ID
+
+# How many pulls did not have coverage?
+PUL_coverage %>% filter(!Protein_ID %in% PULs_with_coverage) %>% .$Protein_ID %>% length()
+# 795
+
+num_pul_with_maps <- PUL_coverage %>% filter(mean_coverage_per_gene > 0) %>% group_by(PUL) %>% count()
+num_genes_pul <- annotations %>% group_by(PUL) %>% count() %>% rename(total = n)
+
+percent_of_PULs_mapped <- num_genes_pul %>% 
+  left_join(num_pul_with_maps) %>% 
+  mutate(percent_pul_mapped = (n/total)*100) %>% 
+  select(PUL, percent_pul_mapped) %>%
+  arrange(desc(percent_pul_mapped))
+```
+ 
+Lets try some binning
+
+OSD113 assembly is here: /bioinf/projects/osd/analysis-data/2014/assemblies/bySample/OSD113_2014-06-21_39m_NPL022
+
+OSD133 had the most coverage... lets assemble it
+## Assemble OSD113 with metaspades
+```{bash}
+mkdir -p verrucomicroba2/data/processed/04assemblies
+
+LOCATION=verrucomicroba2/data/processed/02fastq_qual_trim/paired
+OUTPUT=verrucomicroba2/data/processed/04assemblies/metaspades
+
+for file in `ls "${LOCATION}"/OSD113_R1.qc.fastq.gz`; do
+
+  fname=$(basename "${file}")
+
+  mkdir -p "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
+
+  metaspades.py -1 "${file}" \
+                -2 "${file/R1/R2}" \
+                --threads 50 \
+                -o "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
+done              
+   
+```
+
+## Map reads to OSD113 contigs
+
+```{bash}
+mkdir -p verrucomicroba2/data/processed/04mapping
+
+# make Index
+LOCATION=verrucomicroba2/data/processed/03assemblies/OSD113
+OUTPUT=verrucomicroba2/data/processed/04mapping
+
+mkdir -p "${OUTPUT}"/OSD113
+bowtie2-build "${LOCATION}"/contigs.fasta "${OUTPUT}"/OSD113
+
+# Now mapp the reads!
+
+CONTIGS=verrucomicroba2/data/processed/04mapping/OSD113
+READS=verrucomicroba2/data/processed/02fastq_qual_trim/paired
+OUTPUT=verrucomicroba2/data/processed/04mapping
+    verrucomicroba2/data/processed/04mapping/OSD113/OSD113
+
+for file in `ls "${READS}"/OSD113_R1.qc.fastq.gz`; do
+
+  fname=$(basename "${file}")
+
+  # map
+  bowtie2 -x "${OUTPUT}"/OSD113/OSD113 \
+          -1 "${file}" \
+          -2 "${file/R1/R2}" \
+          -S "${OUTPUT}"/OSD113/OSD113.sam \
+          --threads 20
+          
+  # covert the resulting SAM file to a BAM file:
+  samtools view -F 4 -bS "${OUTPUT}"/OSD113/OSD113.sam > "${OUTPUT}"/OSD113/OSD113.sam-RAW.bam
+  
+  # sort and index the BAM file:
+  samtools sort "${OUTPUT}"/OSD113/OSD113.sam-RAW.bam -o "${OUTPUT}"/OSD113/OSD113.bam
+  
+  samtools index "${OUTPUT}"/OSD113/OSD113.bam;
+done
+```
+
+
+893024 reads; of these:
+  893024 (100.00%) were paired; of these:
+    639356 (71.59%) aligned concordantly 0 times
+    249125 (27.90%) aligned concordantly exactly 1 time
+    4543 (0.51%) aligned concordantly >1 times
+    ----
+    639356 pairs aligned concordantly 0 times; of these:
+      5352 (0.84%) aligned discordantly 1 time
+    ----
+    634004 pairs aligned 0 times concordantly or discordantly; of these:
+      1268008 mates make up the pairs; of these:
+        1264813 (99.75%) aligned 0 times
+        2923 (0.23%) aligned exactly 1 time
+        272 (0.02%) aligned >1 times
+29.18% overall alignment rate
+
+
+## Bin with Concoct
+
+```{bash}
+mkdir -p verrucomicroba2/data/processed/05binning
+
+```
+
+
+## Manually bin with Anvio
+```{bash}
+CONTIGS=verrucomicroba2/data/processed/03assemblies/OSD113/contigs.fasta
+OUTPUT=verrucomicroba2/data/processed/05binning
+
+mkdir -p "${OUTPUT}"
+mkdir -p "${OUTPUT}"/anvio
+
+# Generate contigs database
+anvi-gen-contigs-database -f "${CONTIGS}" \
+                          -o "${OUTPUT}"/anvio/OSD113/CONTIGS.db
+                          
+#Find single-copy-genes
+anvi-run-hmms -c "${OUTPUT}"/anvio/CONTIGS.db \
+              --num-threads 20
+
+# Sort first the anvio way
+#anvi-init-bam -o data/processed/anvio/CC151_full.anvio.bam \
+#                 data/processed/mapping/CC151_full.bam
+
+# Now generate profile
+anvi-profile -c "${OUTPUT}"/anvio/OSD113/CONTIGS.db \
+             -i verrucomicroba2/data/processed/04mapping/OSD113/OSD113.bam \
+             -o "${OUTPUT}"/anvio/OSD113 \
+             --cluster-contigs \
+             --num-threads 30
+             
+```
+
+Lets check it out!
+```{bash}
+LOCATION=verrucomicroba2/data/processed/05binning/anvio/OSD113
+anvi-interactive -p "${LOCATION}"/PROFILE.db \
+                 -c "${LOCATION}"/CONTIGS.db \
+                 --server-only \
+                 -P 8888
+```
+
+
+## Assemble Top Lentimonas OSD samples with PLASS
+
+https://github.com/soedinglab/plass
+
+```{bash}
+# Try one
+READS=verrucomicroba2/data/processed
+
+plass assemble "${READS}"/OSD113_R1.qc.fastq.gz \
+               "${READS}"/OSD113_R2.qc.fastq.gz \
+               "${READS}"/assembly.fas \
+                 tmp \
+                  --threads 40
+                  
+# run loop                
+READS=verrucomicroba2/data/processed/02fastq_qual_trim/paired
+OUTDIR=verrucomicroba2/data/processed/04assemblies/plass
+
+mkdir -p "${OUTDIR}"
+
+for file in `ls "${READS}"/*R1.qc.fastq.gz`; 
+do
+  fname=$(basename "${file}" _R1.qc.fastq.gz)
+  
+  plass assemble "${file}" \
+                 "${file/R1/R2}" \
+                 "${OUTDIR}"/"${fname}"_plass_assembly.fas \
+                 "${OUTDIR}"/"${fname}"_tmp \
+                  --threads 40
+done
+```
+
+## Search assemblies vs GENOME
+### Search Plass assembly vs GENOME
+```{bash}
+GENOME=verrucomicroba2/data/external/CC151.faa
+METAGENOME=verrucomicroba2/data/processed/assemblies_plass/assembly.fas
+LOCATION=verrucomicroba2/data/processed/search
+
+mkdir -p "${LOCATION}"
+
+# Create query DB
+mmseqs createdb "${GENOME}" "${LOCATION}"/queryDB
+ 
+# Create Target DB
+mmseqs createdb "${METAGENOME}" "${LOCATION}"/targetDB
+
+# Create target index
+mmseqs createindex "${LOCATION}"/targetDB "${LOCATION}"/tmp
+
+# Search
+mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/tmp \
+--threads 50 --cov-mode 1 -c 0.6 -e 1e-20
+
+# Search sensitive
+#mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB_sensitive "${LOCATION}"/tmp_sensitive \
+#--start-sens 1 --sens-steps 3 -s 7 --threads 50 --cov-mode 0 -c 0.6
+
+# Convert to BLAST-tab output
+mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB.m8 --format-mode 2
+
+#mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB_sensitive.m8 --format-mode 2
+
+# Filter for top 90% of e-values
+awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB.m8) > "${LOCATION}"/resultDB_e09.m8
+
+#awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB_sensitive.m8) > "${LOCATION}"/resultDB_sensitive_e09.m8
+```
+
+loop
+```{bash}
+GENOME=verrucomicroba2/data/external/CC151.faa
+METAGENOME=verrucomicroba2/data/processed/04assemblies/plass
+LOCATION=verrucomicroba2/data/processed/06search
+
+mkdir -p "${LOCATION}"
+
+# Create query DB
+mmseqs createdb "${GENOME}" "${LOCATION}"/queryDB
+
+# loop of assemblies
+for file in `ls "${METAGENOME}"/*_plass_assembly.fas`;
+do
+
+fname=$(basename "${file}" _plass_assembly.fas)
+
+mkdir "${LOCATION}"/"${fname}"
+
+# Create Target DB
+mmseqs createdb "${METAGENOME}" "${LOCATION}"/"${fname}"/targetDB
+
+# Create target index
+mmseqs createindex "${LOCATION}"/targetDB "${LOCATION}"/"${fname}"/tmp
+
+# Search
+mmseqs search "${LOCATION}"/queryDB \
+              "${LOCATION}"/"${fname}"/targetDB \
+              "${LOCATION}"/"${fname}"/resultDB \
+              "${LOCATION}"/"${fname}"/tmp \
+              --threads 50 \
+              --cov-mode 1 \
+              -c 0.6 \
+              -e 1e-20
+
+# Search sensitive
+#mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB_sensitive "${LOCATION}"/tmp_sensitive \
+#--start-sens 1 --sens-steps 3 -s 7 --threads 50 --cov-mode 0 -c 0.6
+
+# Convert to BLAST-tab output
+mmseqs convertalis "${LOCATION}"/queryDB  \
+                   "${LOCATION}"/"${fname}"/targetDB \
+                   "${LOCATION}"/"${fname}"/resultDB \
+                   "${LOCATION}"/"${fname}"/"${fname}"_resultDB.m8 \
+                   --format-mode 2
+
+#mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB_sensitive.m8 --format-mode 2
+
+# Filter for top 90% of e-values
+awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1  "${LOCATION}"/"${fname}"/"${fname}"_resultDB.m8) >  "${LOCATION}"/"${fname}"/"${fname}"_resultDB_09.m8
+done
+```
+
+
+Check out results
+```{r}
+verr_vs_OSD_sensitive <- data.table::fread(input = "verrucomicroba2/data/processed/search/resultDB_sensitive_e09.m8", 
+                                      sep = "\t", 
+                                      header = FALSE) %>%
+  as_tibble() %>%
+  rename(query_id = V1, target_id = V2, seqIdentity = V3, evalue = V11) %>%
+  mutate(query_id = as.character(query_id),  target_id = as.character(target_id)) %>%
+  mutate(length_query = (V8-V7)+1) %>% 
+  mutate(length_subject = (V10-V9)+1) %>%
+  mutate(coverage_query = (length_query)/V13) %>%
+  mutate(coverage_subject = (length_subject)/V14) %>%
+  select(query_id, target_id, seqIdentity, evalue, coverage_query, coverage_subject)
+
+verr_vs_OSD <- data.table::fread(input = "verrucomicroba2/data/processed/search/resultDB_e09.m8", 
+                                      sep = "\t", 
+                                      header = FALSE) %>%
+  as_tibble() %>%
+  rename(query_id = V1, target_id = V2, seqIdentity = V3, evalue = V11) %>%
+  mutate(query_id = as.character(query_id),  target_id = as.character(target_id)) %>%
+  mutate(length_query = (V8-V7)+1) %>% 
+  mutate(length_subject = (V10-V9)+1) %>%
+  mutate(coverage_query = (length_query)/V13) %>%
+  mutate(coverage_subject = (length_subject)/V14) %>%
+  select(query_id, target_id, seqIdentity, evalue, coverage_query, coverage_subject)
+
+# Import PUL annotations
+annotations <- read_csv("verrucomicroba2/data/external/PULS.csv", col_names = TRUE)
+```
+
+Filter for best hit
+```{r}
+best_hit <- function(results){
+  
+  df_best <- results %>%
+  group_by(query_id) %>%
+  arrange(evalue, desc(coverage_query),desc(coverage_subject)) %>% 
+  mutate(is_best=ifelse(row_number()==1,TRUE,FALSE)) %>%
+  select(query_id,target_id,is_best, evalue, coverage_query, coverage_subject, seqIdentity)%>% 
+  filter(is_best==TRUE) %>% 
+  select(-is_best)
+}
+
+verr_vs_OSD_best_hits <- best_hit(results = verr_vs_OSD)
+verr_vs_OSD_sensitive_best_hits <- best_hit(results = verr_vs_OSD_sensitive)
+
+# Join with PUL annotations
+verr_vs_OSD_best_hits.anno <- verr_vs_OSD_best_hits %>% left_join(annotations %>% rename(query_id = Protein_ID))
+verr_vs_OSD_sensitive_best_hits.anno <- verr_vs_OSD_sensitive_best_hits %>% left_join(annotations %>% rename(query_id = Protein_ID))
+
+# Same PUL genes were hit regardless of sensitivity
+verr_vs_OSD_best_hits.anno %>% drop_na() %>% all_equal(verr_vs_OSD_best_hits.anno %>% drop_na())
+```
+The search results were the same regardless of sensativity parameters in mmseqs.
+
+Explore data
+```{r}
+num_pul_hit <- verr_vs_OSD_best_hits.anno %>% drop_na() %>% group_by(PUL) %>% count()
+num_genes_pul <- annotations %>% group_by(PUL) %>% count() %>% rename(total = n)
+
+percent_of_PULs_hit <- num_genes_pul %>% 
+  left_join(num_pul_hit) %>% 
+  mutate(percent_pul_hit = (n/total)*100) %>% 
+  select(PUL, percent_pul_hit) %>%
+  arrange(desc(percent_pul_hit))
+```
+Fucoidan_2 and Fucoidan have large percent of PUL hits in OSD113.
+
+Join best hits data with reference genome gff file and order the file based on genome position. This will check if any of the hits are next to eachother on the genome.
+
+
+### Search metaSPADES assembly vs genome
+```{bash}
+GENOME=verrucomicroba2/data/external/CC151.faa
+METAGENOME=verrucomicroba2/data/processed/
+LOCATION=verrucomicroba2/data/processed/search
+
+mkdir -p "${LOCATION}"
+
+# Create query DB
+mmseqs createdb "${GENOME}" "${LOCATION}"/queryDB
+ 
+# Create Target DB
+mmseqs createdb "${METAGENOME}" "${LOCATION}"/targetDB
+
+# Create target index
+mmseqs createindex "${LOCATION}"/targetDB "${LOCATION}"/tmp
+
+# Search
+mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/tmp \
+--threads 20 --cov-mode 1 -c 0.6 -e 1e-20
+
+# Search sensitive
+mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB_sensitive "${LOCATION}"/tmp_sensitive \
+--start-sens 1 --sens-steps 3 -s 7 --threads 50 --cov-mode 0 -c 0.6
+
+# Convert to BLAST-tab output
+mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB.m8 --format-mode 2
+
+mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB_sensitive.m8 --format-mode 2
+
+# Filter for top 90% of e-values
+awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB.m8) > "${LOCATION}"/resultDB_e09.m8
+
+awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB_sensitive.m8) > "${LOCATION}"/resultDB_sensitive_e09.m8
+```
+
+Calculate coverage per gene
+
+Upload Andis gene annotations to Anvio profile:
+https://github.com/merenlab/anvio/issues/368
+http://merenlab.org/2017/12/11/additional-data-tables/
+
+Make PUL annotation layer on Anvio profile:
+http://merenlab.org/2016/06/18/importing-functions/
+
+Resources: 
+https://github.com/genomewalker/p2p
+https://github.com/genomewalker/microbeco2015/wiki/3.-Assembly-based-analyses
+https://github.com/MicroB3-IS/osd-analysis/wiki/OSD-assemblies
+https://github.com/MicroB3-IS/osd-analysis/wiki/Requests-for-ancillary-data
+https://github.com/MicroB3-IS/osd-analysis/wiki/Sequence-Data-Pre-Processing
+https://github.com/MicroB3-IS/osd-analysis/wiki/Guide-to-OSD-2014-data
+How to get individuatl coverage per ORF:
+https://github.com/MicroB3-IS/osd-analysis/wiki/OSD-assemblies
