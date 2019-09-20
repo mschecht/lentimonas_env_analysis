@@ -85,6 +85,7 @@ tara <- data.table::fread(input = "zcat data/raw/tara/tara_mitag_tax.tsv.gz",
 db <- RSQLite::dbConnect(drv = SQLite(), dbname = "data/resources/contextual_data.db")
 
 # extract TARA and OSD contextual data from database
+contex <- dbReadTable(db, "contextual_data_all") %>% as_tibble()
 contex_TARA <- dbReadTable(db, "TARA_contex") %>% as_tibble()
 contex_OSD <- dbReadTable(db, "OSD_contex") %>% as_tibble()
 
@@ -101,12 +102,7 @@ tara_mitags <- tara %>% filter(label != "label") %>% mutate(project = "tara")
 mitags <- osd_mitags %>% bind_rows(tara_mitags)
 
 # Save for later
-save(osd_mitags, tara_mitags, file = "verrucomicroba2/data/processed/mitags.RData")
-```
-
-Load for later use in needed
-```{r}
-load(file = "data/processed/mitags.RData")
+save(osd_mitags, tara_mitags, file = "data/processed/mitags.RData")
 ```
 
 Basic questions
@@ -119,14 +115,14 @@ osd_sample_num <- osd_mitags$label %>% unique() %>% length() # 150
 ```
 
 ## 3. Calculate the relative abundance of each phylogenetic level per sample
+Load for later use in needed
+```{r}
+load(file = "data/processed/mitags.RData")
+```
+
 ```{r}
 prep_for_phyloseq <- function(mitags, phylo_lvl){
-  
-  ### Test variables
-#  mitags = osd_mitags
-#  phylo_lvl = "Genus"
-  ###
-  
+
   DF <- mitags %>% 
     group_by_('label', paste(phylo_lvl)) %>%        # group_by phylogenetic level
     count_(paste(phylo_lvl)) %>%                    
@@ -218,9 +214,9 @@ Verrucomicrobiae_rel_abun_TARA <- prep_map(rel_abun = TARA_mitags_rel_abun$Class
 
 Save
 ```{r}
-save(Lentimonas_rel_abun_OSD, Puniceicoccaceae_rel_abun_OSD, Opitutales_rel_abun_OSD, Verrucomicrobiae_rel_abun_OSD, OSD_contex, OSD_file = "verrucomicroba2/data/processed/OSD.RData")
+save(Lentimonas_rel_abun_OSD, Puniceicoccaceae_rel_abun_OSD, Opitutales_rel_abun_OSD, Verrucomicrobiae_rel_abun_OSD, OSD_contex, OSD_file = "data/processed/OSD.RData")
 
-save(Lentimonas_rel_abun_TARA, Puniceicoccaceae_rel_abun_TARA, Opitutales_rel_abun_TARA, Verrucomicrobiae_rel_abun_TARA, TARA_contex, file = "verrucomicroba2/data/processed/TARA.RData")
+save(Lentimonas_rel_abun_TARA, Puniceicoccaceae_rel_abun_TARA, Opitutales_rel_abun_TARA, Verrucomicrobiae_rel_abun_TARA, TARA_contex, file = "data/processed/TARA.RData")
 ```
 
 ## 4. Visualize relative proportions of `Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas` at different phylogenetic levels on the world map
@@ -472,6 +468,11 @@ osd_eu <- Lentimonas_rel_abun_OSD %>%
   mutate(rel_abun = (rel_abun) * 100) %>%
   filter(rel_abun > 0) %>%
   plot_on_world_eu(title = plot_title)
+
+# Save
+ggsave(filename = "reports/figures/p_Lentimonas_TARA.pdf", plot = p_Lentimonas_TARA)
+ggsave(filename = "reports/figures/p_Lentimonas_OSD.pdf", plot = p_Lentimonas_OSD)
+ggsave(filename = "reports/figures/osd_eu.pdf", plot = osd_eu)
 ```
 
 
@@ -641,6 +642,7 @@ annotate_figure(bottom = text_grob(caption_p_osd_heat,size = 10),
                 #fig.lab.face = "bold"
   )
 
+# save figs
 ggsave(filename = "reports/figures/p_osd_heat.pdf", plot = p_osd_heat)
 ggsave(filename = "reports/figures/p_tara_heat.pdf", plot = p_tara_heat)
 ``` 
@@ -672,6 +674,20 @@ Lenitmonas is the most represented Genus of the Puniceicoccaceae Family in OSD11
 
 ## Download raw reads
 
+Load contextual data
+```{r}
+# Projects contextual data database
+db <- RSQLite::dbConnect(drv = SQLite(), dbname = "data/resources/contextual_data.db")
+
+# extract TARA and OSD contextual data from database
+contex <- dbReadTable(db, "contextual_data_all") %>% as_tibble()
+contex_TARA <- dbReadTable(db, "TARA_contex") %>% as_tibble()
+contex_OSD <- dbReadTable(db, "OSD_contex") %>% as_tibble()
+
+dbDisconnect(db) # Disconnect from db
+```
+
+
 Make list 
 ```{r}
 contex_TARA %>% filter(sample_ID %in% tara_10) %>% select(ena_run)
@@ -685,7 +701,7 @@ Download reads
 #data/external
 
 # OSD
-for FTP in `cat verrucomicroba2/data/raw/osd/ftp.txt`;
+for FTP in `cat data/raw/osd/ftp.txt`;
 do
   wget "${FTP}"
 done
@@ -695,11 +711,11 @@ done
 
 ## Trim adapters
 ```{bash}
-mkdir -p verrucomicroba2/data/processed/00adapterclipping
+mkdir -p data/processed/00adapterclipping
 
-LOCATION=verrucomicroba2/data/raw/osd
-LOCATION2=verrucomicroba2/data/resources
-LOCATION3=verrucomicroba2/data/processed/00adapterclipping
+LOCATION=data/raw/osd
+LOCATION2=data/resources
+LOCATION3=data/processed/00adapterclipping
 
 for file in `ls "${LOCATION}"/*R1.qc.fastq.gz`; 
 do 
