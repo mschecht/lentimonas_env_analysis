@@ -84,10 +84,7 @@ tara <- data.table::fread(input = "zcat data/raw/tara/tara_mitag_tax.tsv.gz",
 # Projects contextual data database
 db <- RSQLite::dbConnect(drv = SQLite(), dbname = "data/resources/contextual_data.db")
 
-dbListTables(db) # list contents of database
-
-# extract TARA Oceans contextual data from database
-contex <- dbReadTable(db, "contextual_data_all") %>% as_tibble()
+# extract TARA and OSD contextual data from database
 contex_TARA <- dbReadTable(db, "TARA_contex") %>% as_tibble()
 contex_OSD <- dbReadTable(db, "OSD_contex") %>% as_tibble()
 
