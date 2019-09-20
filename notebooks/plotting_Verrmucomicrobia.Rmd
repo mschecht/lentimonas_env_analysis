@@ -68,21 +68,21 @@ suppressMessages(lapply(packages, library, character.only = TRUE))
 
 ```{r}
 # OSD miTAG data
-osd <- data.table::fread(input = "zcat verrucomicroba2/data/raw/osd/osd2014_mitag_tax.tsv.gz",
+osd <- data.table::fread(input = "zcat data/raw/osd/osd2014_mitag_tax.tsv.gz",
                          sep = "\t",
                          header = TRUE, 
                          nThread = 30) %>%
   as_tibble()
 
 # TARA miTAG data from prokaryotic samples (139)
-tara <- data.table::fread(input = "zcat verrucomicroba2/data/raw/tara/tara_mitag_tax.tsv.gz",
+tara <- data.table::fread(input = "zcat data/raw/tara/tara_mitag_tax.tsv.gz",
                          sep = "\t",
                          header = TRUE, 
                          nThread = 30) %>%
   as_tibble()
 
 # Projects contextual data database
-db <- RSQLite::dbConnect(drv = SQLite(), dbname = "verrucomicroba2/data/resources/contextual_data.db")
+db <- RSQLite::dbConnect(drv = SQLite(), dbname = "data/resources/contextual_data.db")
 
 dbListTables(db) # list contents of database
 
