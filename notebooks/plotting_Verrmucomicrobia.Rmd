@@ -1027,8 +1027,9 @@ percent_of_PULs_mapped <- num_genes_pul %>%
  
 OSD133 had the most coverage out of all OSD metagenomes, lets assemble it to see if we can detect and homologoues from the Lentomonas PUL
 
-## Assemble OSD113 samples with PLASS and metaspades
+## Assemble OSD113 samples with [PLASS](https://github.com/soedinglab/plass) and [metaspades](https://www.ncbi.nlm.nih.gov/pubmed/28298430)
 
+### Assemble OSD113 with PLASS
 ```{bash}
 # Try one
 READS=data/processed
@@ -1056,7 +1057,21 @@ do
                   --threads 40
 done
 ```
-
+### Assemble OSD113 with metaspades
+```{bash}
+mkdir -p verrucomicroba2/data/processed/04assemblies
+LOCATION=verrucomicroba2/data/processed/02fastq_qual_trim/paired
+OUTPUT=verrucomicroba2/data/processed/04assemblies/metaspades
+for file in `ls "${LOCATION}"/OSD113_R1.qc.fastq.gz`; do
+  fname=$(basename "${file}")
+  mkdir -p "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
+  metaspades.py -1 "${file}" \
+                -2 "${file/R1/R2}" \
+                --threads 50 \
+                -o "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
+done              
+   
+```
 
 
 ## Search assembly vs GENOME
