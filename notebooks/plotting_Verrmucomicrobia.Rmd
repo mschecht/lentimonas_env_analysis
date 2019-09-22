@@ -1,16 +1,19 @@
 ---
-title: "MiTag Verrucomicrobia"
+title: "Global Ocean analysis of Verrucomicrobia lentimonas isolate"
 output: html_notebook
+author: "Matthew S. Schechter"
 editor_options: 
   chunk_output_type: console
 ---
 
-Andi has isolated a new strain of Verrucomicrobia (Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas) with a novel Polysaccharide Utilization Loci (PUL) mechanism. This analyses will added an environmental and phylogenetic angle to his paper. We will look for the Verrucomicrobia Lentimonas strain in MiTAG data extracted from OSD 2014 and TARA's "prokaryotic, surface" samples and map it distribution and proportions in each project respectively. Next, we will take these MITags
 
-Literature:
 
-- https://www.nature.com/articles/ismej20123
-- https://microbiomejournal.biomedcentral.com/articles/10.1186/s40168-018-0521-5
+
+This notebook contains select analyses for Sichert et al., 2019 for figures and data...
+
+A new strain of Verrucomicrobia (Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas) with a novel Polysaccharide Utilization Loci (PUL) mechanism. This analysis explored these PUL genes from the Verrucomicrobia Lentimonas strain in metagenomi samples from OSD 2014 and TARA's "prokaryotic, surface" samples.
+
+Please begin this analyses with the `Set up environment` section.
 
 # Set up environment
 
@@ -67,13 +70,11 @@ suppressMessages(lapply(packages, library, character.only = TRUE))
 ```
 
 
-# 1. Reclassify the TARA MiTags with the SILVA SSU r132 database
-
-16S rDNA gene fragments were extracted from the TARA Oceans prokaryotic, surface fraction (Sunagawa et al. 2015)  and Ocean Sampling Day 2014 (Kopf et al. 2015) metagenomes by aligning all reads against the SILVA SSU r132 database (Quast et al. 2013).
-
-# 2. Distribution of `Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas` in OSD and TARA
+# 1. Distribution of `Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas` in OSD and TARA
 
 ## 1. Import data
+
+16S rDNA gene fragments were extracted from the TARA Oceans prokaryotic, surface fraction (Sunagawa et al. 2015)  and Ocean Sampling Day 2014 (Kopf et al. 2015) metagenomes by aligning all reads against the SILVA SSU r132 database (Quast et al. 2013).
 
 ```{r}
 # OSD miTAG data
@@ -679,7 +680,7 @@ top_10(OSD_samples_lentimonas_10, osd_mitags)
 ```
 Lenitmonas is the most represented Genus of the Puniceicoccaceae Family in OSD113 
 
-# 3. Map reads from most abundant samples to genome
+# 2. Map reads from most abundant samples to genome
 
 ## Download raw reads
 
@@ -815,30 +816,6 @@ ls "${LOCATION}" | sed 's|_|\t|' | cut -f1 | uniq > "${LOCATION}"/sample_list.tx
 ```
 
 ## Visualize metagenome read mapping reference genome with Anvio
-
-
-For sanity... separate Andi's genomes into two fasta (genome, plasmid
-)
-```{bash}
-# gene calls
-#cat <(head -n 1 data/external/CC151_GFF3_matt.csv) <(cat data/external/CC151_GFF3_matt.csv | grep "CC151_genome_" | sed 's|CC151_genome_||')  > data/external/CC151_GFF3_matt_genome.csv
-#cat <(head -n 1 data/external/CC151_GFF3_matt.csv) <(cat  data/external/CC151_GFF3_matt.csv | grep "CC151_plasmid_" | sed 's|CC151_plasmid_||')  > data/external/CC151_GFF3_matt_plasmid.csv
-
-# fasta
-#grep -n '>' data/external/CC151_full.fasta
-#1:>CC151_genome
-#79740:>CC151_plasmid
-
-#wc -l data/external/CC151_full.fasta
-# 97434
-
-#> 97434 - 79740 
-#[1] 17694
-
-#head -n 79739 data/external/CC151_full.fasta > data/external/CC151_genome.fasta
-
-#tail -n 17695 data/external/CC151_full.fasta > data/external/CC151_plasmid.fasta
-```
 
 ### Generate Anvio contigs database
 
