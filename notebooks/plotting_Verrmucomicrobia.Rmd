@@ -26,6 +26,15 @@ Activate Conda Env
 conda activate verrucomicrobia
 ```
 
+set WD (working directory) variable to the directory where you downloaded the repo
+```{r}
+# Edit inside quotes here
+WD <- "where/the/repo/is"
+
+# Set working directory for analysis
+setwd(WD)
+```
+
 Install necessary libraries then load 'em up!
 ```{r}
 # Check if basic packages are installed, 
@@ -688,25 +697,23 @@ dbDisconnect(db) # Disconnect from db
 ```
 
 
-Make list 
-```{r}
-contex_TARA %>% filter(sample_ID %in% tara_10) %>% select(ena_run)
+Get FTP links from ENA and make `data/raw/osd/ftp.txt`
+
+Set working directing for analysis
+```{bash}
+WD="where/the/repo/is"
+
+cd "${WD}"
 ```
 
-Get FTP links from ENA and make `verrucomicroba2/data/raw/osd/ftp.txt`
 
 Download reads
 ```{bash}
-#cp /bioinf/projects/osd/main/2014/06/pre-processing/shotgun/quality-trimming/lgc/Sample_OSD113/fastq \
-#data/external
-
 # OSD
 for FTP in `cat data/raw/osd/ftp.txt`;
 do
-  wget "${FTP}"
+  wget "${FTP}" -P data/raw/osd/
 done
-
-# TARA 
 ```
 
 ## Trim adapters
@@ -729,26 +736,32 @@ done
 ```
 
 ## Merge reads
-
 ```{bash}
-mkdir -p  verrucomicroba2/data/processed/01fastq_merged
+mkdir -p  data/processed/01fastq_merged
 
-LOCATION=verrucomicroba2/data/processed/00adapterclipping
-LOCATION1=verrucomicroba2/data/processed/01fastq_merged
+LOCATION=data/processed/00adapterclipping
+LOCATION1=data/processed/01fastq_merged
 
 for file in `ls "${LOCATION}"/*R1.ac.fastq`; do
   fname=$(basename "${file}")
-  vsearch --threads 2 --fastq_maxmergelen 291 --fastq_minovlen 125 --fastq_mergepairs "${file}" --reverse "${file/R1/R2}" --fastq_ascii 33 --fastqout "${LOCATION1}"/"${fname/R1.ac.fastq/merged.ac.fastq}" --fastq_allowmergestagger
+  vsearch --threads 2 \
+          --fastq_maxmergelen 291 \
+          --fastq_minovlen 125 \
+          --fastq_mergepairs "${file}" \
+          --reverse "${file/R1/R2}" \
+          --fastq_ascii 33 \
+          --fastqout "${LOCATION1}"/"${fname/R1.ac.fastq/merged.ac.fastq}"\
+          --fastq_allowmergestagger
 done
 ```
 
 ## Quality trim merged reads
 ```{bash}
-mkdir -p  verrucomicroba2/data/processed/02fastq_qual_trim/
-mkdir -p  verrucomicroba2/data/processed/02fastq_qual_trim/merged/
+mkdir -p  data/processed/02fastq_qual_trim/
+mkdir -p  data/processed/02fastq_qual_trim/merged/
 
-LOCATION=verrucomicroba2/data/processed/01fastq_merged
-LOCATION1=verrucomicroba2/data/processed/merged/02fastq_qual_trim
+LOCATION=data/processed/01fastq_merged
+LOCATION1=data/processed/merged/02fastq_qual_trim
 
 for file in `ls "${LOCATION}"/*merged.ac.fastq`; do
      fname=$(basename "${file}")
@@ -759,8 +772,8 @@ done
 
 ## Quality trim paired reads
 ```{bash}
-LOCATION=verrucomicroba2/data/processed/00adapterclipping
-LOCATION1=verrucomicroba2/data/processed/02fastq_qual_trim/paired
+LOCATION=data/processed/00adapterclipping
+LOCATION1=data/processed/02fastq_qual_trim/paired
 
 for file in `ls "${LOCATION}"/*R1.ac.fastq`; do
      fname=$(basename "${file}")
@@ -769,105 +782,70 @@ for file in `ls "${LOCATION}"/*R1.ac.fastq`; do
               outs="${LOCATION1}"/"${fname/ac/SR}.gz" \
               out="${LOCATION1}"/"${fname/ac/qc}.gz"\
               out2="${LOCATION1}"/"${fname/R1.ac/R2.qc}.gz"\
-     trimq=20 qtrim=rl minlen=100 maxns=0
+              trimq=20 \
+              qtrim=rl \
+              minlen=100 maxns=0
 done
 ```
 
 ## Map Reads
 
-Index genome
+Index Lentimonas genome
 ```{bash}
-mkdir -p verrucomicroba2/data/processed/03mapping
+mkdir -p data/processed/03mapping
 
-bowtie2-build verrucomicroba2/data/external/CC151_full.fasta verrucomicroba2/data/processed/03mapping/CC151_full
+bowtie2-build data/external/CC151_full.fasta data/processed/03mapping/CC151_full
 ```
 
-Inspect the index I just built
+Inspect the index just built
 ```{bash}
-bowtie2-inspect verrucomicroba2/data/processed/03mapping/CC151_full -s
+bowtie2-inspect data/processed/03mapping/CC151_full -s
 ```
-Looks good! Has both the genome and plasmid read :)
+*Should have both the genome and plasmid read
 
 Map reads, Convert sam to bam, sort the bam file, and index
 ```{bash}
 # Make list of samples
-LOCATION=verrucomicroba2/data/raw/osd
+LOCATION=data/raw/osd
 
 ls "${LOCATION}" | sed 's|_|\t|' | cut -f1 | uniq > "${LOCATION}"/sample_list.txt
 
-# Test
-bowtie2 -x verrucomicroba2/data/processed/03mapping/CC151_full \
-        -1 verrucomicroba2/data/raw/osd/OSD113_R1.qc.fastq.gz \
-        -2 verrucomicroba2/data/raw/osd/OSD113_R2.qc.fastq.gz \
-        -S verrucomicroba2/data/processed/03mapping/CC151_full.sam \
-        --threads 20
-
 # Run
-./verrucomicroba2/src/data/mapping.sh
+./src/data/mapping.sh
 ```
 
 ## Visualize metagenome read mapping reference genome with Anvio
 
-Let's visualize all the read mapping in Anvio!
 
 For sanity... separate Andi's genomes into two fasta (genome, plasmid
 )
 ```{bash}
 # gene calls
-#cat <(head -n 1 verrucomicroba2/data/external/CC151_GFF3_matt.csv) <(cat verrucomicroba2/data/external/CC151_GFF3_matt.csv | grep "CC151_genome_" | sed 's|CC151_genome_||')  > verrucomicroba2/data/external/CC151_GFF3_matt_genome.csv
-#cat <(head -n 1 verrucomicroba2/data/external/CC151_GFF3_matt.csv) <(cat  verrucomicroba2/data/external/CC151_GFF3_matt.csv | grep "CC151_plasmid_" | sed 's|CC151_plasmid_||')  > verrucomicroba2/data/external/CC151_GFF3_matt_plasmid.csv
+#cat <(head -n 1 data/external/CC151_GFF3_matt.csv) <(cat data/external/CC151_GFF3_matt.csv | grep "CC151_genome_" | sed 's|CC151_genome_||')  > data/external/CC151_GFF3_matt_genome.csv
+#cat <(head -n 1 data/external/CC151_GFF3_matt.csv) <(cat  data/external/CC151_GFF3_matt.csv | grep "CC151_plasmid_" | sed 's|CC151_plasmid_||')  > data/external/CC151_GFF3_matt_plasmid.csv
 
 # fasta
-#grep -n '>' verrucomicroba2/data/external/CC151_full.fasta
+#grep -n '>' data/external/CC151_full.fasta
 #1:>CC151_genome
 #79740:>CC151_plasmid
 
-#wc -l verrucomicroba2/data/external/CC151_full.fasta
+#wc -l data/external/CC151_full.fasta
 # 97434
 
 #> 97434 - 79740 
 #[1] 17694
 
-#head -n 79739 verrucomicroba2/data/external/CC151_full.fasta > verrucomicroba2/data/external/CC151_genome.fasta
+#head -n 79739 data/external/CC151_full.fasta > data/external/CC151_genome.fasta
 
-#tail -n 17695 verrucomicroba2/data/external/CC151_full.fasta > verrucomicroba2/data/external/CC151_plasmid.fasta
+#tail -n 17695 data/external/CC151_full.fasta > data/external/CC151_plasmid.fasta
 ```
 
 ### Generate Anvio contigs database
 
-Try with Andi's external gene calls
-```{bash}
-FULL=verrucomicroba2/data/external/CC151_full.fasta
-GENOME=verrucomicroba2/data/external/CC151_genome.fasta
-PLASMID=verrucomicroba2/data/external/CC151_plasmid.fasta
-OUTPUT=verrucomicroba2/data/processed/anvio
-GENES1=verrucomicroba2/data/external/CC151_GFF3_matt_genome.csv
-GENES2=verrucomicroba2/data/external/CC151_GFF3_matt_plasmid.csv
-
-# External gene calls 
-anvi-gen-contigs-database -f "${GENOME}" \
-                          -o "${OUTPUT}"/CONTIGS_genome.db \
-                          --external-gene-calls "${GENES1}"
-
-#Config Error: The sequence corresponds to the gene callers id '1' does not seem to have proper
-#              number of nucleotides to be translated :/ Here it is: ATGGCTACATGCTACCAGAAAATGTC
-#              AAAGGATAGTATTACACCACCTGAAGCACGTAGCATGACTCTAGTGGATGCTGGTTCAATGGTAAGCAATAGCGCCTATT
-#              CCTGCAATCTGAAGGTGCTCACTCCGTATTTCTA
-
-anvi-export-gene-calls -c "${OUTPUT}"/CONTIGS_genome.db \
-                       -o "${OUTPUT}"/gene_calls_summary_genome.txt
-# NOT working...
-
-anvi-gen-contigs-database -f "${PLASMID}" \
-                          -o "${OUTPUT}"/CONTIGS_plasmid.db \
-                          --external-gene-calls "${GENES2}
-```
-Didn't work
-
 Have Anvio make the gene calls
 ```{bash}
-FULL=verrucomicroba2/data/external/CC151_full.fasta
-OUTPUT=verrucomicroba2/data/processed/03mapping/anvio
+FULL=data/external/CC151_full.fasta
+OUTPUT=data/processed/03mapping/anvio
 
 mkdir -p "${OUTPUT}"
 
@@ -886,24 +864,23 @@ anvi-get-sequences-for-gene-calls -c "${OUTPUT}"/CONTIGS.db \
                                   --gene-caller-ids "${OUTPUT}"/gene_calls_summary.txt 
 
 ```
-`--get-aa-sequences` not working!!!!!
 
 ### Find single-copy-genes
 ```{bash}
-anvi-run-hmms -c verrucomicroba2/data/processed/03mapping/anvio/CONTIGS.db \
+anvi-run-hmms -c data/processed/03mapping/anvio/CONTIGS.db \
               --num-threads 50
 ```
 
 ### Generate Anvio profile
 ```{bash}
 # Sort first the anvio way
-anvi-init-bam -o verrucomicroba2/data/processed/03mapping/anvio/CC151_full.anvio.bam \
-                 verrucomicroba2/data/processed/mapping/CC151_full.bam
+anvi-init-bam -o data/processed/03mapping/anvio/CC151_full.anvio.bam \
+                 data/processed/mapping/CC151_full.bam
                 
 # Loop
-LOCATION=verrucomicroba2/data/raw/osd
-ANVIO=verrucomicroba2/data/processed/03mapping/anvio
-MAPPING=verrucomicroba2/data/processed/03mapping
+LOCATION=data/raw/osd
+ANVIO=data/processed/03mapping/anvio
+MAPPING=data/processed/03mapping
 
 for GENOME in `cat "${LOCATION}"/sample_list.txt`
 do
@@ -916,9 +893,9 @@ anvi-profile -c "${ANVIO}"/CONTIGS.db \
 done
 ```
 
-### Merge all of the profiles
+### Merge all of the anvio profiles
 ```{bash}
-ANVIO=verrucomicroba2/data/processed/03mapping/anvio
+ANVIO=data/processed/03mapping/anvio
 
 anvi-merge    "${ANVIO}"/OSD*/PROFILE.db \
            -o "${ANVIO}"/MERGED-OSD \
@@ -927,7 +904,7 @@ anvi-merge    "${ANVIO}"/OSD*/PROFILE.db \
 
 ### Get average coverage per gene
 ```{bash}
-ANVIO=verrucomicroba2/data/processed/03mapping/anvio
+ANVIO=data/processed/03mapping/anvio
 
 anvi-export-gene-coverage-and-detection -p "${ANVIO}"/OSD113/PROFILE.db \
                                         -c "${ANVIO}"/CONTIGS.db \
@@ -935,11 +912,10 @@ anvi-export-gene-coverage-and-detection -p "${ANVIO}"/OSD113/PROFILE.db \
         
 ```
 
-
 ### Check out results via ssh tunnel
 Tutorial [HERE](http://merenlab.org/2015/11/28/visualizing-from-a-server/)
 ```{bash}
-LOCATION=verrucomicroba2/data/processed/03mapping/anvio
+LOCATION=data/processed/03mapping/anvio
 anvi-interactive -p "${LOCATION}"/MERGED-OSD/PROFILE.db \
                  -c "${LOCATION}"/CONTIGS.db \
                  --server-only \
@@ -949,14 +925,14 @@ anvi-interactive -p "${LOCATION}"/MERGED-OSD/PROFILE.db \
 
 ## Coverage per contig and gene
 
-Contig coverage
+### Contig coverage
 
 [Metassemble script](https://github.com/inodb/metassemble/blob/master/scripts/validate/map/gen_contig_cov_per_bam_table.py)
 ```{bash}
-MAP=verrucomicroba2/data/processed/03mapping
-GENOME=verrucomicroba2/data/external/CC151_full.fasta
-BIN=verrucomicroba2/src/tools/gen_contig_cov_per_bam_table.py
-OUTPUT=verrucomicroba2/data/processed/03mapping/cov-per-contig
+MAP=data/processed/03mapping
+GENOME=data/external/CC151_full.fasta
+BIN=src/tools/gen_contig_cov_per_bam_table.py
+OUTPUT=data/processed/03mapping/cov-per-contig
 
 mkdir -p "${OUTPUT}"
 
@@ -965,12 +941,12 @@ genomeCoverageBed -ibam "${MAP}"/CC151_full_OSD113.bam > "${OUTPUT}"/CC151_full_
 python "${BIN}" --isbedfiles "${GENOME}" "${OUTPUT}"/CC151_full_OSD113.bam.coverage > "${OUTPUT}"/CC151_full_OSD113.bam.coverage.percontig
 ```
 
-Gene Coverage
+### Gene Coverage
 ```{bash}
-GENOME=verrucomicroba2/data/external/CC151_full.fasta
+GENOME=data/external/CC151_full.fasta
 NAME=$(basename "${GENOME}" .fasta)
-OUTPUT=verrucomicroba2/data/processed/03mapping/cov-per-gene
-MAP=verrucomicroba2/data/processed/03mapping
+OUTPUT=data/processed/03mapping/cov-per-gene
+MAP=data/processed/03mapping
 
 mkdir -p "${OUTPUT}"
 
@@ -995,17 +971,16 @@ bedtools coverage -hist -sorted  -a "${OUTPUT}"/"${NAME}".bed -b "${MAP}"/CC151_
 
 Calculate the mean coverage of each ORF with the following awk [script](https://gist.github.com/genomewalker/089690cc59795ae73125#file-get_orf_coverage_from_bam-coassembly-awk)
 ```{bash}
-OUTPUT=verrucomicroba2/data/processed/03mapping/cov-per-gene
-BIN=verrucomicroba2/src/tools/get_orf_coverage_from_bam-coAssembly.awk
+OUTPUT=data/processed/03mapping/cov-per-gene
+BIN=src/tools/get_orf_coverage_from_bam-coAssembly.awk
 
 mawk -f "${BIN}" "${OUTPUT}"/CC151_full_OSD113.coverage.hist > "${OUTPUT}"/CC151_full_OSD113.orf-coverage.txt
 ```
 
-Ok now lets see if any of Andi's PUL genes have coverage on OSD113
-Check out results
+Check out coverage results of lentimonas PUL genes from OSD113 metagenome
 ```{r}
 # Import gene coverage
-cov_per_gene <- data.table::fread(input = "verrucomicroba2/data/processed/03mapping/cov-per-gene/CC151_full_OSD113.orf-coverage.txt", 
+cov_per_gene <- data.table::fread(input = "data/processed/03mapping/cov-per-gene/CC151_full_OSD113.orf-coverage.txt", 
                                       sep = "\t", 
                                       header = FALSE) %>%
   as_tibble() %>% 
@@ -1018,7 +993,7 @@ cov_per_gene <- data.table::fread(input = "verrucomicroba2/data/processed/03mapp
   unite(col = Protein_ID, Protein_ID, test)
 
 # Import annotation
-annotations <- read_csv("verrucomicroba2/data/external/PULS.csv", col_names = TRUE)
+annotations <- read_csv("data/external/PULS.csv", col_names = TRUE)
 
 # Join annotations with gene cov results
 PUL_coverage <- annotations %>% left_join(cov_per_gene) 
@@ -1050,144 +1025,13 @@ percent_of_PULs_mapped <- num_genes_pul %>%
   arrange(desc(percent_pul_mapped))
 ```
  
-Lets try some binning
+OSD133 had the most coverage out of all OSD metagenomes, lets assemble it to see if we can detect and homologoues from the Lentomonas PUL
 
-OSD113 assembly is here: /bioinf/projects/osd/analysis-data/2014/assemblies/bySample/OSD113_2014-06-21_39m_NPL022
-
-OSD133 had the most coverage... lets assemble it
-## Assemble OSD113 with metaspades
-```{bash}
-mkdir -p verrucomicroba2/data/processed/04assemblies
-
-LOCATION=verrucomicroba2/data/processed/02fastq_qual_trim/paired
-OUTPUT=verrucomicroba2/data/processed/04assemblies/metaspades
-
-for file in `ls "${LOCATION}"/OSD113_R1.qc.fastq.gz`; do
-
-  fname=$(basename "${file}")
-
-  mkdir -p "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
-
-  metaspades.py -1 "${file}" \
-                -2 "${file/R1/R2}" \
-                --threads 50 \
-                -o "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
-done              
-   
-```
-
-## Map reads to OSD113 contigs
-
-```{bash}
-mkdir -p verrucomicroba2/data/processed/04mapping
-
-# make Index
-LOCATION=verrucomicroba2/data/processed/03assemblies/OSD113
-OUTPUT=verrucomicroba2/data/processed/04mapping
-
-mkdir -p "${OUTPUT}"/OSD113
-bowtie2-build "${LOCATION}"/contigs.fasta "${OUTPUT}"/OSD113
-
-# Now mapp the reads!
-
-CONTIGS=verrucomicroba2/data/processed/04mapping/OSD113
-READS=verrucomicroba2/data/processed/02fastq_qual_trim/paired
-OUTPUT=verrucomicroba2/data/processed/04mapping
-    verrucomicroba2/data/processed/04mapping/OSD113/OSD113
-
-for file in `ls "${READS}"/OSD113_R1.qc.fastq.gz`; do
-
-  fname=$(basename "${file}")
-
-  # map
-  bowtie2 -x "${OUTPUT}"/OSD113/OSD113 \
-          -1 "${file}" \
-          -2 "${file/R1/R2}" \
-          -S "${OUTPUT}"/OSD113/OSD113.sam \
-          --threads 20
-          
-  # covert the resulting SAM file to a BAM file:
-  samtools view -F 4 -bS "${OUTPUT}"/OSD113/OSD113.sam > "${OUTPUT}"/OSD113/OSD113.sam-RAW.bam
-  
-  # sort and index the BAM file:
-  samtools sort "${OUTPUT}"/OSD113/OSD113.sam-RAW.bam -o "${OUTPUT}"/OSD113/OSD113.bam
-  
-  samtools index "${OUTPUT}"/OSD113/OSD113.bam;
-done
-```
-
-
-893024 reads; of these:
-  893024 (100.00%) were paired; of these:
-    639356 (71.59%) aligned concordantly 0 times
-    249125 (27.90%) aligned concordantly exactly 1 time
-    4543 (0.51%) aligned concordantly >1 times
-    ----
-    639356 pairs aligned concordantly 0 times; of these:
-      5352 (0.84%) aligned discordantly 1 time
-    ----
-    634004 pairs aligned 0 times concordantly or discordantly; of these:
-      1268008 mates make up the pairs; of these:
-        1264813 (99.75%) aligned 0 times
-        2923 (0.23%) aligned exactly 1 time
-        272 (0.02%) aligned >1 times
-29.18% overall alignment rate
-
-
-## Bin with Concoct
-
-```{bash}
-mkdir -p verrucomicroba2/data/processed/05binning
-
-```
-
-
-## Manually bin with Anvio
-```{bash}
-CONTIGS=verrucomicroba2/data/processed/03assemblies/OSD113/contigs.fasta
-OUTPUT=verrucomicroba2/data/processed/05binning
-
-mkdir -p "${OUTPUT}"
-mkdir -p "${OUTPUT}"/anvio
-
-# Generate contigs database
-anvi-gen-contigs-database -f "${CONTIGS}" \
-                          -o "${OUTPUT}"/anvio/OSD113/CONTIGS.db
-                          
-#Find single-copy-genes
-anvi-run-hmms -c "${OUTPUT}"/anvio/CONTIGS.db \
-              --num-threads 20
-
-# Sort first the anvio way
-#anvi-init-bam -o data/processed/anvio/CC151_full.anvio.bam \
-#                 data/processed/mapping/CC151_full.bam
-
-# Now generate profile
-anvi-profile -c "${OUTPUT}"/anvio/OSD113/CONTIGS.db \
-             -i verrucomicroba2/data/processed/04mapping/OSD113/OSD113.bam \
-             -o "${OUTPUT}"/anvio/OSD113 \
-             --cluster-contigs \
-             --num-threads 30
-             
-```
-
-Lets check it out!
-```{bash}
-LOCATION=verrucomicroba2/data/processed/05binning/anvio/OSD113
-anvi-interactive -p "${LOCATION}"/PROFILE.db \
-                 -c "${LOCATION}"/CONTIGS.db \
-                 --server-only \
-                 -P 8888
-```
-
-
-## Assemble Top Lentimonas OSD samples with PLASS
-
-https://github.com/soedinglab/plass
+## Assemble OSD113 samples with PLASS and metaspades
 
 ```{bash}
 # Try one
-READS=verrucomicroba2/data/processed
+READS=data/processed
 
 plass assemble "${READS}"/OSD113_R1.qc.fastq.gz \
                "${READS}"/OSD113_R2.qc.fastq.gz \
@@ -1196,8 +1040,8 @@ plass assemble "${READS}"/OSD113_R1.qc.fastq.gz \
                   --threads 40
                   
 # run loop                
-READS=verrucomicroba2/data/processed/02fastq_qual_trim/paired
-OUTDIR=verrucomicroba2/data/processed/04assemblies/plass
+READS=data/processed/02fastq_qual_trim/paired
+OUTDIR=data/processed/04assemblies/plass
 
 mkdir -p "${OUTDIR}"
 
@@ -1213,12 +1057,14 @@ do
 done
 ```
 
-## Search assemblies vs GENOME
+
+
+## Search assembly vs GENOME
 ### Search Plass assembly vs GENOME
 ```{bash}
-GENOME=verrucomicroba2/data/external/CC151.faa
-METAGENOME=verrucomicroba2/data/processed/assemblies_plass/assembly.fas
-LOCATION=verrucomicroba2/data/processed/search
+GENOME=data/external/CC151.faa
+METAGENOME=data/processed/assemblies_plass/assembly.fas
+LOCATION=data/processed/search
 
 mkdir -p "${LOCATION}"
 
@@ -1252,9 +1098,9 @@ awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort 
 
 loop
 ```{bash}
-GENOME=verrucomicroba2/data/external/CC151.faa
-METAGENOME=verrucomicroba2/data/processed/04assemblies/plass
-LOCATION=verrucomicroba2/data/processed/06search
+GENOME=data/external/CC151.faa
+METAGENOME=data/processed/04assemblies/plass
+LOCATION=data/processed/06search
 
 mkdir -p "${LOCATION}"
 
@@ -1306,7 +1152,7 @@ done
 
 Check out results
 ```{r}
-verr_vs_OSD_sensitive <- data.table::fread(input = "verrucomicroba2/data/processed/search/resultDB_sensitive_e09.m8", 
+verr_vs_OSD_sensitive <- data.table::fread(input = "data/processed/search/resultDB_sensitive_e09.m8", 
                                       sep = "\t", 
                                       header = FALSE) %>%
   as_tibble() %>%
@@ -1318,7 +1164,7 @@ verr_vs_OSD_sensitive <- data.table::fread(input = "verrucomicroba2/data/process
   mutate(coverage_subject = (length_subject)/V14) %>%
   select(query_id, target_id, seqIdentity, evalue, coverage_query, coverage_subject)
 
-verr_vs_OSD <- data.table::fread(input = "verrucomicroba2/data/processed/search/resultDB_e09.m8", 
+verr_vs_OSD <- data.table::fread(input = "data/processed/search/resultDB_e09.m8", 
                                       sep = "\t", 
                                       header = FALSE) %>%
   as_tibble() %>%
@@ -1331,7 +1177,7 @@ verr_vs_OSD <- data.table::fread(input = "verrucomicroba2/data/processed/search/
   select(query_id, target_id, seqIdentity, evalue, coverage_query, coverage_subject)
 
 # Import PUL annotations
-annotations <- read_csv("verrucomicroba2/data/external/PULS.csv", col_names = TRUE)
+annotations <- read_csv("data/external/PULS.csv", col_names = TRUE)
 ```
 
 Filter for best hit
@@ -1377,9 +1223,9 @@ Join best hits data with reference genome gff file and order the file based on g
 
 ### Search metaSPADES assembly vs genome
 ```{bash}
-GENOME=verrucomicroba2/data/external/CC151.faa
-METAGENOME=verrucomicroba2/data/processed/
-LOCATION=verrucomicroba2/data/processed/search
+GENOME=data/external/CC151.faa
+METAGENOME=data/processed/
+LOCATION=data/processed/search
 
 mkdir -p "${LOCATION}"
 
@@ -1410,22 +1256,3 @@ awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort 
 
 awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB_sensitive.m8) > "${LOCATION}"/resultDB_sensitive_e09.m8
 ```
-
-Calculate coverage per gene
-
-Upload Andis gene annotations to Anvio profile:
-https://github.com/merenlab/anvio/issues/368
-http://merenlab.org/2017/12/11/additional-data-tables/
-
-Make PUL annotation layer on Anvio profile:
-http://merenlab.org/2016/06/18/importing-functions/
-
-Resources: 
-https://github.com/genomewalker/p2p
-https://github.com/genomewalker/microbeco2015/wiki/3.-Assembly-based-analyses
-https://github.com/MicroB3-IS/osd-analysis/wiki/OSD-assemblies
-https://github.com/MicroB3-IS/osd-analysis/wiki/Requests-for-ancillary-data
-https://github.com/MicroB3-IS/osd-analysis/wiki/Sequence-Data-Pre-Processing
-https://github.com/MicroB3-IS/osd-analysis/wiki/Guide-to-OSD-2014-data
-How to get individuatl coverage per ORF:
-https://github.com/MicroB3-IS/osd-analysis/wiki/OSD-assemblies
