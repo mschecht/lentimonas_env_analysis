@@ -1,7 +1,7 @@
 # ‘Lentimonas’ use an array of exo-enzymes to degrade sulfated fucans in the ocean
 ## Sichert et al., 2019
 
-This repository contain the analyses for Figure 6 ***Verrucomicrobia* are abundant and specialized polysaccharide degraders**
+This repository contains the analyses for Figure 6 ***Verrucomicrobia* are abundant and specialized polysaccharide degraders**
 
 To begin this analysis follow the instructions below:
 
@@ -25,3 +25,5 @@ unzip mitags.zip
 # Move data to correct directories
 mv tara_mitag_tax.tsv.gz data/raw/tara/ && mv osd2014_mitag_tax.tsv.gz data/raw/osd/
 ```
+
+3. Open the `plotting_Verrmucomicrobia.Rmd` file in the `notebooks/` directory in RStudio and being the analyses
