@@ -5,7 +5,7 @@ This repository contain the analyses for Figure 6 ***Verrucomicrobia* are abunda
 
 To begin this analysis follow the instructions below:
 
-1. Clone this rep
+1. Clone this repository
 ```
 # Clone
 git clone https://github.com/mschecht/lentimonas_env_analysis.git
