@@ -1004,7 +1004,7 @@ percent_of_PULs_mapped <- num_genes_pul %>%
  
 OSD133 had the most coverage out of all OSD metagenomes, lets assemble it to see if we can detect and homologoues from the Lentomonas PUL
 
-## Assemble OSD113 samples with [PLASS](https://github.com/soedinglab/plass) and [metaspades](https://www.ncbi.nlm.nih.gov/pubmed/28298430)
+## Assemble OSD113 samples with [PLASS](https://github.com/soedinglab/plass)
 
 ### Assemble OSD113 with PLASS
 ```{bash}
@@ -1034,61 +1034,9 @@ do
                   --threads 40
 done
 ```
-### Assemble OSD113 with metaspades
-```{bash}
-mkdir -p verrucomicroba2/data/processed/04assemblies
-LOCATION=verrucomicroba2/data/processed/02fastq_qual_trim/paired
-OUTPUT=verrucomicroba2/data/processed/04assemblies/metaspades
-for file in `ls "${LOCATION}"/OSD113_R1.qc.fastq.gz`; do
-  fname=$(basename "${file}")
-  mkdir -p "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
-  metaspades.py -1 "${file}" \
-                -2 "${file/R1/R2}" \
-                --threads 50 \
-                -o "${OUTPUT}"/"${fname/_R1.qc.fastq.gz/}"
-done              
-   
-```
-
 
 ## Search assembly vs GENOME
 ### Search Plass assembly vs GENOME
-```{bash}
-GENOME=data/external/CC151.faa
-METAGENOME=data/processed/assemblies_plass/assembly.fas
-LOCATION=data/processed/search
-
-mkdir -p "${LOCATION}"
-
-# Create query DB
-mmseqs createdb "${GENOME}" "${LOCATION}"/queryDB
- 
-# Create Target DB
-mmseqs createdb "${METAGENOME}" "${LOCATION}"/targetDB
-
-# Create target index
-mmseqs createindex "${LOCATION}"/targetDB "${LOCATION}"/tmp
-
-# Search
-mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/tmp \
---threads 50 --cov-mode 1 -c 0.6 -e 1e-20
-
-# Search sensitive
-#mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB_sensitive "${LOCATION}"/tmp_sensitive \
-#--start-sens 1 --sens-steps 3 -s 7 --threads 50 --cov-mode 0 -c 0.6
-
-# Convert to BLAST-tab output
-mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB.m8 --format-mode 2
-
-#mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB_sensitive.m8 --format-mode 2
-
-# Filter for top 90% of e-values
-awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB.m8) > "${LOCATION}"/resultDB_e09.m8
-
-#awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB_sensitive.m8) > "${LOCATION}"/resultDB_sensitive_e09.m8
-```
-
-loop
 ```{bash}
 GENOME=data/external/CC151.faa
 METAGENOME=data/processed/04assemblies/plass
@@ -1137,14 +1085,14 @@ mmseqs convertalis "${LOCATION}"/queryDB  \
 #mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB_sensitive.m8 --format-mode 2
 
 # Filter for top 90% of e-values
-awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1  "${LOCATION}"/"${fname}"/"${fname}"_resultDB.m8) >  "${LOCATION}"/"${fname}"/"${fname}"_resultDB_09.m8
+awk -f src/external/evalue_06_filter.awk <(sort -k1,1  "${LOCATION}"/"${fname}"/"${fname}"_resultDB.m8) >  "${LOCATION}"/"${fname}"/"${fname}"_resultDB_09.m8
 done
 ```
 
 
 Check out results
 ```{r}
-verr_vs_OSD_sensitive <- data.table::fread(input = "data/processed/search/resultDB_sensitive_e09.m8", 
+verr_vs_OSD_sensitive <- data.table::fread(input = "data/processed/06search/resultDB_sensitive_e09.m8", 
                                       sep = "\t", 
                                       header = FALSE) %>%
   as_tibble() %>%
@@ -1156,7 +1104,7 @@ verr_vs_OSD_sensitive <- data.table::fread(input = "data/processed/search/result
   mutate(coverage_subject = (length_subject)/V14) %>%
   select(query_id, target_id, seqIdentity, evalue, coverage_query, coverage_subject)
 
-verr_vs_OSD <- data.table::fread(input = "data/processed/search/resultDB_e09.m8", 
+verr_vs_OSD <- data.table::fread(input = "data/processed/06search/resultDB_e09.m8", 
                                       sep = "\t", 
                                       header = FALSE) %>%
   as_tibble() %>%
@@ -1209,42 +1157,3 @@ percent_of_PULs_hit <- num_genes_pul %>%
   arrange(desc(percent_pul_hit))
 ```
 Fucoidan_2 and Fucoidan have large percent of PUL hits in OSD113.
-
-Join best hits data with reference genome gff file and order the file based on genome position. This will check if any of the hits are next to eachother on the genome.
-
-
-### Search metaSPADES assembly vs genome
-```{bash}
-GENOME=data/external/CC151.faa
-METAGENOME=data/processed/
-LOCATION=data/processed/search
-
-mkdir -p "${LOCATION}"
-
-# Create query DB
-mmseqs createdb "${GENOME}" "${LOCATION}"/queryDB
- 
-# Create Target DB
-mmseqs createdb "${METAGENOME}" "${LOCATION}"/targetDB
-
-# Create target index
-mmseqs createindex "${LOCATION}"/targetDB "${LOCATION}"/tmp
-
-# Search
-mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/tmp \
---threads 20 --cov-mode 1 -c 0.6 -e 1e-20
-
-# Search sensitive
-mmseqs search "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB_sensitive "${LOCATION}"/tmp_sensitive \
---start-sens 1 --sens-steps 3 -s 7 --threads 50 --cov-mode 0 -c 0.6
-
-# Convert to BLAST-tab output
-mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB.m8 --format-mode 2
-
-mmseqs convertalis "${LOCATION}"/queryDB "${LOCATION}"/targetDB "${LOCATION}"/resultDB "${LOCATION}"/resultDB_sensitive.m8 --format-mode 2
-
-# Filter for top 90% of e-values
-awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB.m8) > "${LOCATION}"/resultDB_e09.m8
-
-awk -f /bioinf/home/mschecht/post_msc/parks/scripts/evalue_06_filter.awk <(sort -k1,1 "${LOCATION}"/resultDB_sensitive.m8) > "${LOCATION}"/resultDB_sensitive_e09.m8
-```
