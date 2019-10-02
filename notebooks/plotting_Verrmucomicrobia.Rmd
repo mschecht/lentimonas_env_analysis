@@ -20,8 +20,6 @@ Please begin this analyses with the `Set up environment` section.
 Create Conda Environment
 ```{bash}
 conda create -n verrucomicrobia -f verrucomicrobia.yml
-
-conda create -n taxit -f taxit.yml
 ```
 
 Activate Conda Env
