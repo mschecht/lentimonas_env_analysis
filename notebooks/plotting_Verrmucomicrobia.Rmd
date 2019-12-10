@@ -296,7 +296,7 @@ plot_on_world <- function(df, title){
     scale_fill_gradient2(low = "#40e0d0", mid = "#ff8c00", high="#ff0080", 
                          #low = "#fcb045", mid = "#fd1d1d", high="#833ab4",
                          trans = "sqrt", 
-                         midpoint=1.8,
+                         midpoint=2,
                          name = "Proportion (%)") +
     ggtitle(paste(title)) +
     xlab("") +
@@ -326,7 +326,7 @@ plot_on_world1 <- function(df, title) {
     scale_fill_gradient2(low = "#40e0d0", mid = "#ff8c00", high="#ff0080",
                          #low = "blue", high = "red",
                          trans = "sqrt", 
-                         midpoint=1,
+                         midpoint=2,
                          name = "Proportion (%)") +
     ggtitle(paste(title)) +
     xlab("") +
@@ -454,6 +454,57 @@ plot_on_world_eu <- function(df, title){
 ```
 
 ### Final plots for manuscript:
+```{r}
+p_Lentimonas_TARA_data <- Lentimonas_rel_abun_TARA %>% 
+  mutate(rel_abun = (rel_abun) * 100) %>% 
+  filter(rel_abun > 0) %>%
+  mutate(project = "tara")
+
+
+p_Lentimonas_OSD_data <- Lentimonas_rel_abun_OSD %>% 
+  mutate(rel_abun = (rel_abun) * 100) %>%
+  filter(rel_abun > 0) %>%
+  mutate(project = "osd")
+
+
+plot_on_world <- function(df, title){
+  
+  #df = Lentimonas_rel_abun
+  #title = "Relative abundance of Verrucomicrobia Lentimonas in TARA Oceans and OSD"
+  
+  # Plot
+  map.world <- map_data(map="world")
+  
+  p <- ggplot() +
+    geom_map(data=map.world, map=map.world, aes(map_id=region, x=long, y=lat)) +
+    geom_point(data = df, 
+               size = 2.2, 
+               alpha = 0.7,
+               color = "black",
+               aes(x=longitude, y=latitude, fill = rel_abun, shape = project)) +
+    scale_shape_manual(values = c(21,22)) +
+    scale_fill_gradient2(low = "#40e0d0", mid = "#ff8c00", high="#ff0080", 
+                         #low = "#fcb045", mid = "#fd1d1d", high="#833ab4",
+                         trans = "sqrt", 
+                         midpoint=2,
+                         name = "Proportion (%)") +
+    ggtitle(paste(title)) +
+    xlab("") +
+    ylab("") +
+    coord_equal(xlim = c(-160, 170)) +
+    theme_map(legend.position = "top",
+              legend.key.height = unit(0.2, "cm"))
+  
+  return(p)
+}
+
+p_Lentimonas_TARA_data %>% 
+  bind_rows(p_Lentimonas_OSD_data) %>%
+  arrange(rel_abun) %>% # plot highest proportion samples on top
+  plot_on_world(title = "")
+```
+
+
 ```{r}
 # TARA all
 #---------
