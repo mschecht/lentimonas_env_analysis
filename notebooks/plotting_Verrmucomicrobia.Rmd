@@ -125,6 +125,7 @@ tara_mitags <- tara %>% filter(label != "label") %>% mutate(project = "tara")
 mitags <- osd_mitags %>% bind_rows(tara_mitags)
 
 # Save for later
+dir.create(path = "data/processed/")
 save(osd_mitags, tara_mitags, file = "data/processed/mitags.RData")
 ```
 
@@ -191,6 +192,7 @@ Save/load data
 Save
 ```{r}
 # save
+dir.create(path = "data/interim/")
 save(OSD_mitags_rel_abun, TARA_mitags_rel_abun, contex, contex_TARA, contex_OSD, file = "data/interim/mitag_rel_abun.RData")
 ```
 
