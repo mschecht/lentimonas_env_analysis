@@ -74,23 +74,38 @@ suppressMessages(lapply(packages, library, character.only = TRUE))
 
 16S rDNA gene fragments were extracted from the TARA Oceans prokaryotic, surface fraction (Sunagawa et al. 2015)  and Ocean Sampling Day 2014 (Kopf et al. 2015) metagenomes by aligning all reads against the SILVA SSU r132 database (Quast et al. 2013).
 
+```{bash}
+# Download data from figshare
+wget -c https://ndownloader.figshare.com/articles/9904793/versions/1 -O osd_tara_mitags.zip
+
+# Unzip
+unzip osd_tara_mitags.zip
+
+# Clean up
+mv osd2014_mitag_tax.tsv.gz data/raw/osd/
+mv tara_mitag_tax.tsv.gz data/raw/tara/
+
+rm osd_tara_mitags.zip
+```
+
+
 ```{r}
 # OSD miTAG data
-osd <- data.table::fread(input = "zcat data/raw/osd/osd2014_mitag_tax.tsv.gz",
+osd <- data.table::fread(input = "gzcat data/raw/osd/osd2014_mitag_tax.tsv.gz",
                          sep = "\t",
                          header = TRUE, 
                          nThread = 30) %>%
   as_tibble()
 
 # TARA miTAG data from prokaryotic samples (139)
-tara <- data.table::fread(input = "zcat data/raw/tara/tara_mitag_tax.tsv.gz",
+tara <- data.table::fread(input = "gzcat data/raw/tara/tara_mitag_tax.tsv.gz",
                          sep = "\t",
                          header = TRUE, 
                          nThread = 30) %>%
   as_tibble()
 
 # Projects contextual data database
-db <- RSQLite::dbConnect(drv = SQLite(), dbname = "data/resources/contextual_data.db")
+db <- RSQLite::dbConnect(drv = SQLite(), dbname = "data/external/contextual_data.db")
 
 # extract TARA and OSD contextual data from database
 contex <- dbReadTable(db, "contextual_data_all") %>% as_tibble()
