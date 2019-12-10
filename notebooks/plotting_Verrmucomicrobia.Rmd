@@ -156,7 +156,7 @@ prep_for_phyloseq <- function(mitags, phylo_lvl){
     rename_(ID = paste(phylo_lvl)) %>%
     as.data.table %>%
     dcast.data.table(ID ~ label, 
-                         fun.aggregate = "sum", 
+                         fun.aggregate = sum, 
                          fill = 0,
                          value.var = "abun")
   
@@ -207,20 +207,20 @@ prep_map <- function(rel_abun, phylo_lvl_name){
   
   
   ### Test Variables
-#  rel_abun = OSD_mitags_rel_abun$Genus
-#  phylo_lvl_name = "Lentimonas"
+    #rel_abun = OSD_mitags_rel_abun$Genus
+    #phylo_lvl_name = "Lentimonas"
   ###
   
   # Convert back to long form for ggplot
   rnames <- rel_abun %>% row.names() # get row names
-
+  
   rel_abun.df <- rel_abun %>% as.data.frame() # convert to dataframe
-
-  rownames(rel_abun.df) <- rnames # add in row names (taxa) to dataframe
-
+  
+  row.names(rel_abun.df) <- rnames # add in row names (taxa) to dataframe
+  
   rel_abun.df %>% 
-    as_tibble() %>%
     rownames_to_column(var = "ID") %>% 
+    as_tibble() %>%
     gather(key = "sample_ID", value = "rel_abun", -ID) %>% 
     filter(ID == paste(phylo_lvl_name)) %>%
     left_join(contex %>% select(sample_ID, latitude, longitude, ecoregion)) # Join with metadata
@@ -239,9 +239,9 @@ Verrucomicrobiae_rel_abun_TARA <- prep_map(rel_abun = TARA_mitags_rel_abun$Class
 
 Save
 ```{r}
-save(Lentimonas_rel_abun_OSD, Puniceicoccaceae_rel_abun_OSD, Opitutales_rel_abun_OSD, Verrucomicrobiae_rel_abun_OSD, OSD_contex, OSD_file = "data/processed/OSD.RData")
+save(Lentimonas_rel_abun_OSD, Puniceicoccaceae_rel_abun_OSD, Opitutales_rel_abun_OSD, Verrucomicrobiae_rel_abun_OSD, contex_OSD, file = "data/processed/OSD.RData")
 
-save(Lentimonas_rel_abun_TARA, Puniceicoccaceae_rel_abun_TARA, Opitutales_rel_abun_TARA, Verrucomicrobiae_rel_abun_TARA, TARA_contex, file = "data/processed/TARA.RData")
+save(Lentimonas_rel_abun_TARA, Puniceicoccaceae_rel_abun_TARA, Opitutales_rel_abun_TARA, Verrucomicrobiae_rel_abun_TARA, contex_TARA, file = "data/processed/TARA.RData")
 ```
 
 ## 4. Visualize relative proportions of `Verrucomicrobiae Opitutales Puniceicoccaceae Lentimonas` at different phylogenetic levels on the world map
@@ -268,10 +268,10 @@ theme_map <- function(...) {
       axis.title.x = element_blank(),
       axis.title.y = element_blank(),
       # panel.grid.minor = element_line(color = "#ebebe5", size = 0.2),
-      panel.grid.major = element_line(color = "#ebebe5", size = 0.2),
+      panel.grid.major = element_blank(),
       panel.grid.minor = element_blank(),
-      plot.background = element_rect(fill = "#f5f5f2", color = NA),
-      panel.background = element_rect(fill = "#f5f5f2", color = NA),
+      plot.background = element_rect(fill = "grey", color = NA),
+      panel.background = element_rect(fill = "grey", color = NA),
       legend.background = element_rect(fill = "#f5f5f2", color = NA),
       panel.border = element_blank(),
       ...
@@ -318,7 +318,7 @@ plot_on_world1 <- function(df, title) {
   p <- ggplot() +
     geom_map(data=map.world, map=map.world, aes(map_id=region, x=long, y=lat)) +
     geom_point(data = df, 
-               shape =21,
+               shape =22,
                size = 2.2, 
                alpha = 0.7,
                color = "black",
