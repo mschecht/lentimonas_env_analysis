@@ -74,21 +74,6 @@ suppressMessages(lapply(packages, library, character.only = TRUE))
 
 16S rDNA gene fragments were extracted from the TARA Oceans prokaryotic, surface fraction (Sunagawa et al. 2015)  and Ocean Sampling Day 2014 (Kopf et al. 2015) metagenomes by aligning all reads against the SILVA SSU r132 database (Quast et al. 2013).
 
-```{bash}
-# Download data from figshare
-wget -c https://ndownloader.figshare.com/articles/9904793/versions/1 -O osd_tara_mitags.zip
-
-# Unzip
-unzip osd_tara_mitags.zip
-
-# Clean up
-mv osd2014_mitag_tax.tsv.gz data/raw/osd/
-mv tara_mitag_tax.tsv.gz data/raw/tara/
-
-rm osd_tara_mitags.zip
-```
-
-
 ```{r}
 # OSD miTAG data
 osd <- data.table::fread(input = "gzcat data/raw/osd/osd2014_mitag_tax.tsv.gz",
@@ -125,7 +110,6 @@ tara_mitags <- tara %>% filter(label != "label") %>% mutate(project = "tara")
 mitags <- osd_mitags %>% bind_rows(tara_mitags)
 
 # Save for later
-dir.create(path = "data/processed/")
 save(osd_mitags, tara_mitags, file = "data/processed/mitags.RData")
 ```
 
@@ -192,7 +176,6 @@ Save/load data
 Save
 ```{r}
 # save
-dir.create(path = "data/interim/")
 save(OSD_mitags_rel_abun, TARA_mitags_rel_abun, contex, contex_TARA, contex_OSD, file = "data/interim/mitag_rel_abun.RData")
 ```
 
@@ -498,10 +481,12 @@ plot_on_world <- function(df, title){
   return(p)
 }
 
-p_Lentimonas_TARA_data %>% 
+p_osd_tara_worldmap <- p_Lentimonas_TARA_data %>% 
   bind_rows(p_Lentimonas_OSD_data) %>%
   arrange(rel_abun) %>% # plot highest proportion samples on top
   plot_on_world(title = "")
+
+ggsave(filename = "reports/figures/p_osd_tara_worldmap.pdf", plot = p_osd_tara_worldmap)
 ```
 
 
